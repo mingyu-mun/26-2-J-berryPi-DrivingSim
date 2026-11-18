@@ -1,0 +1,45 @@
+# Unity
+/[Ll]ibrary/
+/[Tt]emp/
+/[Oo]bj/
+/[Bb]uild/
+/[Bb]uilds/
+/[Ll]ogs/
+/[Uu]ser[Ss]ettings/
+/[Mm]emoryCaptures/
+/[Rr]ecordings/
+*.csproj
+*.sln
+*.suo
+*.user
+*.pidb
+*.booproj
+*.svd
+*.pdb
+*.mdb
+*.opendb
+*.VC.db
+.vs/
+.vscode/
+.idea/
+*.apk
+*.aab
+crashlytics-buildid.txt
+sysinfo.txt
+
+# 시뮬레이터 로그 (개인 주행 데이터 — 저장소에 올리지 말 것)
+/SimLogs/
+
+# Python 추론 환경 (메뉴 Capstone > AI 추론 환경 설치 로 각자 생성)
+Tools/jberry_ai/.venv/
+__pycache__/
+*.pyc
+
+# Unity Asset Store 에셋은 재배포 금지 → 각자 Asset Store 에서 받아 Import (docs/01_설치.md)
+/Assets/SportCar/
+/Assets/SportCar.meta
+/Assets/Arabic Neoclassical/
+/Assets/Arabic Neoclassical.meta
+# 과거 복사 실수로 생긴 중복 폴더
+/Assets/CapstoneDrivingSim/
+/Assets/CapstoneDrivingSim.meta

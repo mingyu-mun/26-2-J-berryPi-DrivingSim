@@ -1,0 +1,2 @@
+source: github.com/mingyu-mun/26-2-J-berryPi-Capstone @ 1374f6a77c5219b824689d5b2a30b32e4e0f013e
+추론에 필요한 파일만 복사 (수정하지 않음). 실시간용 차이는 ../engine.py 맨 위 주석 참고. 가중치 사용 조건은 models/README.md (WESAD 학습분 비상업).
