@@ -165,7 +165,7 @@ namespace CapstoneSim
             if (selected) Fill(new Rect(r.x, r.y + 18, 4, r.height - 36), Accent, 2f);
             Label(new Rect(r.x + 28, r.y + 18, r.width - 56, 20), tag, 13, selected ? Accent : Sub, true);
             Label(new Rect(r.x + 28, r.y + 40, r.width - 56, 40), title, 28, Text, true);
-            Label(new Rect(r.x + 28, r.y + 84, r.width - 56, r.height - 96), desc, 15, Sub, false, TextAnchor.UpperLeft, true);
+            Label(new Rect(r.x + 28, r.y + 84, r.width - 100, r.height - 96), desc, 15, Sub, false, TextAnchor.UpperLeft, true);
             if (!string.IsNullOrEmpty(chip))
             {
                 float w = TextWidth(chip, 12, true) + 20;

@@ -154,6 +154,19 @@ namespace CapstoneSim
             if (SimTheme.Button(new Rect(x, y, 190, 46), "기록 폴더 열기", 15)) ReplayLibrary.OpenFolder();
             if (SimTheme.Button(new Rect(x + 205, y, 190, 46), "목록 새로고침", 15)) Refresh();
             if (SimTheme.Button(new Rect(x + w - 150, y, 150, 46), "종료", 15, SimTheme.Kind.Ghost)) Quit();
+
+            // 빠른 시연: 첫 기록의 졸음 구간(16:00)부터, 자동 기준 + 앞부분 빠른 입력
+            y += 76;
+            string demoDir = ReplayLibrary.DefaultReplayDir();
+            var qr = new Rect(x, y, w, 92);
+            SimTheme.Fill(qr, new Color(1, 1, 1, 0.03f), 14f);
+            SimTheme.Outline(qr, SimTheme.Line, 1f, 14f);
+            SimTheme.Label(new Rect(qr.x + 22, qr.y + 14, 300, 20), "QUICK DEMO", 12, SimTheme.Berry, true);
+            SimTheme.Label(new Rect(qr.x + 22, qr.y + 36, w - 290, 44), demoDir != null
+                ? $"{Path.GetFileName(demoDir)} · 16:00부터 · 자동 기준 + 빠른 입력 → 약 1분 뒤 졸음 확정"
+                : "리플레이 기록이 없습니다", 14, SimTheme.Sub, false, TextAnchor.UpperLeft, true);
+            if (SimTheme.Button(new Rect(qr.xMax - 250, qr.y + 22, 230, 48), "졸음 감지 시연  ▶", 16, SimTheme.Kind.Primary, demoDir != null && _venvOk))
+                sim.StartSession(new SessionConfig { replayDir = demoDir, startOffset = 960f, preroll = true, baselineDir = "", aiMode = "causal", participantId = _cfg.participantId });
         }
 
         // ---------------------------------------------------------------- 리플레이 설정
@@ -188,7 +201,7 @@ namespace CapstoneSim
 
             // --- 2열: 기준 + 계산 방식 ---
             float by = DrawBaselinePicker(c2, cy, colW2, bottom - 160, sel != null ? sel.name : null);
-            DrawAiMode(c2, Mathf.Max(by + 18, bottom - 130), colW2);
+            DrawAiMode(c2, by + 22, colW2);
 
             // --- 3열: 요약 ---
             SimTheme.Header(new Rect(c3, cy, colW3, 24), "세션 요약");
@@ -306,7 +319,7 @@ namespace CapstoneSim
             SimTheme.Panel(new Rect(x0, y0, W, H), 18f, 0.86f);
             float pad = 28, colW1 = 440, colW2 = 520, cy = y0 + pad;
             float c1 = x0 + pad, c2 = c1 + colW1 + 28, c3 = c2 + colW2 + 28, colW3 = x0 + W - pad - c3;
-            SimTheme.Chip(new Rect(x0 + W - pad - 74, cy, 74, 24), "DEMO", SimTheme.Amber);
+            SimTheme.Chip(new Rect(c1 + colW1 - 74, cy, 74, 24), "DEMO", SimTheme.Amber);
 
             // --- 1열: 전송 방식 ---
             SimTheme.Header(new Rect(c1, cy, colW1, 24), "전송 방식 (라즈베리파이 → 시뮬레이터)");
@@ -401,13 +414,17 @@ namespace CapstoneSim
             foreach (var v in d) { if (v < mn) mn = v; if (v > mx) mx = v; }
             float span = Mathf.Max(1e-6f, mx - mn);
             int cols = Mathf.Max(8, (int)(r.width / 2));
+            float prevY = -1f;
             for (int i = 0; i < cols; i++)
             {
                 int a = i * d.Length / cols, b = Mathf.Max(a + 1, (i + 1) * d.Length / cols);
                 float lo = float.MaxValue, hi = float.MinValue;
                 for (int k = a; k < b && k < d.Length; k++) { lo = Mathf.Min(lo, d[k]); hi = Mathf.Max(hi, d[k]); }
                 float y0 = r.yMax - 6 - (hi - mn) / span * (r.height - 12), y1 = r.yMax - 6 - (lo - mn) / span * (r.height - 12);
+                if (prevY >= 0) { y0 = Mathf.Min(y0, prevY); y1 = Mathf.Max(y1, prevY); }   // 이전 열과 이어 그림
                 SimTheme.Fill(new Rect(r.x + i * 2, y0, 2, Mathf.Max(1.5f, y1 - y0)), c);
+                int last = Mathf.Min(b, d.Length) - 1;
+                prevY = r.yMax - 6 - (d[last] - mn) / span * (r.height - 12);
             }
         }
 
@@ -425,8 +442,9 @@ namespace CapstoneSim
             if (c != null)
             {
                 Kv(r.x + 32, ref y, r.width - 64, "모드", c.live ? $"실측 (DEMO · {LiveBioSource.TransportNames[(int)c.transport]})" : "리플레이");
-                if (!c.live) Kv(r.x + 32, ref y, r.width - 64, "기록", Path.GetFileName(c.replayDir));
-                Kv(r.x + 32, ref y, r.width - 64, "개인 기준", string.IsNullOrEmpty(c.baselineDir) ? "자동 수집" : Path.GetFileName(c.baselineDir));
+                if (!c.live) Kv(r.x + 32, ref y, r.width - 64, "기록", sim.Bio != null ? sim.Bio.SessionName : Path.GetFileName(c.replayDir));
+                string bd = sim.Ai != null ? sim.Ai.baselineDir : c.baselineDir;      // 실제 적용된 값 (자동 테스트 덮어쓰기 포함)
+                Kv(r.x + 32, ref y, r.width - 64, "개인 기준", string.IsNullOrEmpty(bd) ? "자동 수집" : "기준 파일 · " + Path.GetFileName(bd));
                 Kv(r.x + 32, ref y, r.width - 64, "경과", SimTheme.MmSs(Time.realtimeSinceStartup - sim.SessionStartRealtime));
             }
             float by = r.yMax - 200;

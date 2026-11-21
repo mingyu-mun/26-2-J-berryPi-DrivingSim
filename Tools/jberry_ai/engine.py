@@ -53,14 +53,17 @@ torch.set_num_threads(2)
 # ---------------------------------------------------------------- 실시간용 검출 임계 (저장소와 유일하게 다른 부분)
 # 저장소 detect_ecg_peaks 는 높이 임계를 '세션 전체' 에너지의 99 백분위 × 0.3 으로 잡는다.
 # 실시간에는 그때까지 받은 신호만 있으므로, 앞부분에 움직임 잡음이 몇 초만 있어도 백분위가 튀어 박동을 대량으로 놓친다
-# (rec4 첫 460초: 618 → 247 박동). 그래서 같은 식을 '60초 조각별 값의 중앙값' 으로 바꿨다.
+# (rec4 첫 460초: 618 → 247 박동). 그래서 같은 식을 '조각별 값의 중앙값' 으로 바꿨다. 조각 길이 = 버퍼/6 (10~60초): 긴 버퍼에서는 60초 조각(batch 와 거의 같음), 실측 시작 직후 짧은 버퍼에서도 조각이 여러 개라 잡음에 끌려가지 않는다.
 # rec4 전체에서 batch 박동 2726개 모두 ±20 ms 안에 다시 잡히고 12개만 더 잡힌다 (PPG 는 2652/2652 동일).
 import driver_state.features as _F  # noqa: E402
 import driver_state.teacher.rr as _RRm  # noqa: E402
 from scipy.signal import find_peaks as _find_peaks, welch as _welch  # noqa: E402
 
 
-def _chunk_median(x, fs, fn, sec=60.0):
+def _chunk_median(x, fs, fn, sec=None):
+    """조각별 fn 값의 중앙값. 조각 길이 = 버퍼 길이/6 을 10~60초로 제한 (짧은 버퍼에서도 조각이 6개 이상)."""
+    if sec is None:
+        sec = min(60.0, max(10.0, len(x) / fs / 6.0))
     n = int(sec * fs)
     v = [fn(x[i:i + n]) for i in range(0, max(1, len(x) - n + 1), n)] if len(x) >= n else [fn(x)]
     return float(np.median(v))

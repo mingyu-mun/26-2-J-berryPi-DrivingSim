@@ -96,8 +96,32 @@ namespace CapstoneSim
             LogCount[key] = 1; Logs.Add(key);
         }
 
+        System.Diagnostics.Process _spawn;
+
+        /// <summary>spawn_py=<스크립트와 인자> : 시험 동안 .venv Python 으로 보조 프로세스 실행 (예: 실측 모드용 rpi_sender.py)</summary>
+        void SpawnHelper()
+        {
+            string cmd = Arg("spawn_py");
+            if (string.IsNullOrEmpty(cmd)) return;
+            string root = Path.GetFullPath(Path.Combine(Application.dataPath, ".."));
+            string py = Path.Combine(root, "Tools", "jberry_ai", ".venv", "Scripts", "python.exe");
+            try
+            {
+                var psi = new System.Diagnostics.ProcessStartInfo(File.Exists(py) ? py : "python", "-u " + cmd)
+                { UseShellExecute = false, CreateNoWindow = true, WorkingDirectory = root, RedirectStandardOutput = true, RedirectStandardError = true };
+                _spawn = System.Diagnostics.Process.Start(psi);
+                _spawn.OutputDataReceived += (o, e) => { if (e.Data != null) lock (_spawnOut) _spawnOut.Add(e.Data); };
+                _spawn.ErrorDataReceived += (o, e) => { if (e.Data != null) lock (_spawnOut) _spawnOut.Add("[stderr] " + e.Data); };
+                _spawn.BeginOutputReadLine(); _spawn.BeginErrorReadLine();
+                _diag.AppendLine($"[보조 프로세스] {cmd}");
+            }
+            catch (System.Exception e) { _diag.AppendLine($"[보조 프로세스 실패] {cmd}: {e.Message}"); }
+        }
+        readonly List<string> _spawnOut = new List<string>();
+
         IEnumerator Start()
         {
+            SpawnHelper();
             Application.runInBackground = true;
             _outDir = Path.Combine(AutoTestDir, _id);
             Directory.CreateDirectory(_outDir);
@@ -339,6 +363,12 @@ namespace CapstoneSim
             }
             catch (System.Exception e) { sb.AppendLine("    읽기 실패: " + e.Message); }
             sb.AppendLine();
+            if (_spawnOut.Count > 0)
+            {
+                sb.AppendLine("## 보조 프로세스 출력 (마지막 10줄)");
+                lock (_spawnOut) for (int i = Mathf.Max(0, _spawnOut.Count - 10); i < _spawnOut.Count; i++) sb.AppendLine("    " + _spawnOut[i]);
+                sb.AppendLine();
+            }
             sb.AppendLine("## 진단");
             sb.Append(_diag);
             sb.AppendLine();
@@ -349,6 +379,7 @@ namespace CapstoneSim
             foreach (var k in Logs) sb.AppendLine($"- {k}" + (LogCount[k] > 1 ? $"  (x{LogCount[k]})" : ""));
             File.WriteAllText(Path.Combine(_outDir ?? AutoTestDir, "report.txt"), sb.ToString(), new UTF8Encoding(false));
             Application.logMessageReceived -= OnLog;
+            try { if (_spawn != null && !_spawn.HasExited) _spawn.Kill(); } catch { }
             try { File.Delete(FlagPath); } catch { }
 #if UNITY_EDITOR
             UnityEditor.EditorApplication.isPlaying = false;
@@ -359,6 +390,7 @@ namespace CapstoneSim
 
         void OnDestroy()
         {
+            try { if (_spawn != null && !_spawn.HasExited) _spawn.Kill(); } catch { }
             if (_rt) _rt.Release();
         }
     }

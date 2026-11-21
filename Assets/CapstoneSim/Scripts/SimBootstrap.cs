@@ -207,8 +207,17 @@ namespace CapstoneSim
             Menu.sim = this;
             string menuArg = AutoTestRunner.Active ? AutoTestRunner.Arg("menu") : null;
             if (!enableBioAi) EnterDriveOnly();
-            else if (AutoTestRunner.Active && string.IsNullOrEmpty(menuArg)) StartSession(SessionConfig.FromInspector(this));
-            else if (showMainMenu || !string.IsNullOrEmpty(menuArg)) EnterMenu(menuArg);
+            else if (AutoTestRunner.Active && string.IsNullOrEmpty(menuArg))
+            {
+                var c = SessionConfig.FromInspector(this);
+                c.live = AutoTestRunner.Arg("mode") == "live";          // 자동 테스트: mode=live → 실측(UDP) 세션
+                StartSession(c);
+            }
+            else if (showMainMenu || !string.IsNullOrEmpty(menuArg))
+            {
+                EnterMenu(menuArg);
+                if (AutoTestRunner.Active && AutoTestRunner.Arg("live_listen") == "1") EnsureLive().StartListening();
+            }
             else StartSession(SessionConfig.FromInspector(this));
             // 자동 테스트: pause_at=<초> 이면 그 시각에 세션 메뉴를 띄워 스크린샷에 담는다
             if (AutoTestRunner.Active && float.TryParse(AutoTestRunner.Arg("pause_at"), System.Globalization.NumberStyles.Float,

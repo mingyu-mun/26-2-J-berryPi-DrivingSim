@@ -197,7 +197,10 @@ namespace CapstoneSim
         void DrawAi()
         {
             const float PW = 480;
-            var P = new Rect(SimTheme.VW - PW - 40, 40, PW, 520);
+            var lr = Live ? ai.Latest : null;
+            bool warm = lr != null && lr.base_source != null && lr.base_source.StartsWith("file") && lr.feat_ready >= 0 && lr.feat_ready < 1f;
+            float ph = lr == null ? 160 : (lr.has_out ? 452 : 404) + (warm ? 22 : 0);
+            var P = new Rect(SimTheme.VW - PW - 40, 40, PW, ph);
             SimTheme.Panel(P, 18f);
             float x = P.x + 24, y = P.y + 18, w = PW - 48;
             SimTheme.Label(new Rect(x, y, 300, 24), "DRIVER STATE · AI", 13, SimTheme.Accent, true);
@@ -296,7 +299,8 @@ namespace CapstoneSim
             SimTheme.Fill(new Rect(x, fy - 8, w, 1), SimTheme.Line);
             string modeTxt = r.mode == "exact" ? "batch 동일(exact)" : "실시간(causal)";
             string pre = r.preroll > 0 ? $" · 앞 {r.preroll:F0}s 빠른 입력" : "";
-            SimTheme.Label(new Rect(x, fy, w, 18), $"{modeTxt}{pre} · 기준 {BaseText(r)} · 창 {r.n_windows}개", 12, SimTheme.Sub);
+            string bt = r.base_source != null && r.base_source.StartsWith("file") ? $"기준 파일 {r.base_a:F0}~{r.base_b:F0}s" : $"기준 {BaseText(r)}";
+            SimTheme.Label(new Rect(x, fy, w, 18), $"{modeTxt}{pre} · {bt} · 창 {r.n_windows}개", 12, SimTheme.Sub);
             SimTheme.Label(new Rect(x, fy + 20, w, 18), $"입력 {(r.ecg_rx ? "●" : "○")} 생체  {(r.can_rx ? "●" : "○")} CAN   ·   마지막 창 끝 {MmSs(r.win_end)} ({V(r.out_age, "F0")}s 전)   ·   처리 {V(r.proc_ms, "F0")} ms", 12, SimTheme.Sub);
             SimTheme.Label(new Rect(x, fy + 40, w, 18), "can_drowsy = null (검증된 CAN 규칙 없음)" + (string.IsNullOrEmpty(r.error) ? "" : $"   ⚠ {r.error}"), 12, string.IsNullOrEmpty(r.error) ? SimTheme.Dim : SimTheme.Amber);
         }
