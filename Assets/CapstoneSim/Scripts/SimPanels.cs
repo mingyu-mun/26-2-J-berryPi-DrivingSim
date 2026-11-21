@@ -16,7 +16,7 @@ namespace CapstoneSim
         public bool show = true;
         [Tooltip("졸음 확정 시 경고음")] public bool beep = true;
 
-        const int GW = 640, GH = 120;
+        const int GW = 560, GH = 120;
         Texture2D _texE, _texP;
         Color32[] _pix;
         int _lastLevel = -9, _lastWaveN = -1;
@@ -138,14 +138,18 @@ namespace CapstoneSim
             SimTheme.End(m);
         }
 
-        // ---------------------------------------------------------------- 왼쪽 위: 생체 신호
+        // ---------------------------------------------------------------- 왼쪽 위: 생체 신호 + 기준 대비
+        const float BioW = 800f;
+        static readonly Color BaseCol = new Color(1f, 1f, 1f, 0.55f);
+        static readonly Color EcgC = new Color(0.31f, 1f, 0.59f), PpgC = new Color(1f, 0.49f, 0.37f);
+
         void DrawBio()
         {
             var r = Live ? ai.Latest : null;
-            var P = new Rect(40, 40, 680, 410);
+            var P = new Rect(40, 40, BioW, 622);
             SimTheme.Panel(P, 18f);
             float x = P.x + 22, y = P.y + 18, w = P.width - 44;
-            SimTheme.Label(new Rect(x, y, 300, 24), "BIOSIGNAL", 13, SimTheme.Accent, true);
+            SimTheme.Label(new Rect(x, y, 300, 24), "BIOSIGNAL · 개인 기준 대비", 13, SimTheme.Accent, true);
             bool liveSrc = bio != null && bio.IsLive;
             string badge = liveSrc ? "실측 라이브" : "기록 재생";
             float bw = SimTheme.TextWidth(badge, 12, true) + 22;
@@ -158,12 +162,21 @@ namespace CapstoneSim
                 return;
             }
             bool wave = r != null && r.ecg_w != null && r.ecg_w.Length > 1;
+            bool has = r != null && r.has_out;
             y += 36;
-            WaveRow(x, y, w, "ECG", r != null && r.has_out ? $"HR <b>{V(r.hr_ecg, "F0")}</b> bpm   ·   이상 간격 {V(r.q_ecg, "F2")}" : "HR –", _texE, wave);
-            y += 156;
-            WaveRow(x, y, w, "PPG", r != null && r.has_out ? $"PR <b>{V(r.hr_ppg, "F0")}</b> bpm   ·   이상 간격 {V(r.q_ppg, "F2")}" : "PR –", _texP, wave);
-            y += 158;
-            // 아래: 재생 위치 (기록) 또는 수신 품질 (실측)
+            WaveRow(x, y, w, "ECG", has ? $"HR <b>{V(r.hr_ecg, "F0")}</b> bpm   ·   이상 간격 {V(r.q_ecg, "F2")}" : "HR –", _texE, wave,
+                    r?.ecg_tb, r?.ecg_tn, r != null ? r.ecg_r : -9, r != null ? r.ecg_amp : -1, EcgC, "R-peak");
+            y += 160;
+            WaveRow(x, y, w, "PPG", has ? $"PR <b>{V(r.hr_ppg, "F0")}</b> bpm   ·   이상 간격 {V(r.q_ppg, "F2")}" : "PR –", _texP, wave,
+                    r?.ppg_tb, r?.ppg_tn, r != null ? r.ppg_r : -9, r != null ? r.ppg_amp : -1, PpgC, "맥파 정점");
+            y += 160;
+            DrawTachogram(new Rect(x, y, w, 128), r);
+            y += 136;
+            SimTheme.Label(new Rect(x, y, w, 18), "기준 대비 이탈 z  =  (현재 − 개인 기준 중앙값) / 산포     |z| ≥ 2 주황 · ≥ 3 빨강", 12, SimTheme.Dim);
+            y += 22;
+            DrawDeviationChips(x, y, w, r);
+            y += 40;
+            // 재생 위치 (기록) 또는 수신 품질 (실측)
             if (bio is BioReplay br)
             {
                 float dur = Mathf.Max(1f, br.DurationSec);
@@ -183,14 +196,145 @@ namespace CapstoneSim
                 SimTheme.Label(new Rect(x, y + 4, w, 30), $"{lb.Device}   ·   {lb.PacketRate:F0} 패킷/s   ·   손실 {lb.Lost}   ·   흔들림 {lb.JitterMs:F1} ms   ·   마지막 수신 {lb.LastAgeSec:F1} s 전", 13, lb.Receiving ? SimTheme.Sub : SimTheme.Amber);
         }
 
-        void WaveRow(float x, float y, float w, string name, string info, Texture2D tex, bool wave)
+        void WaveRow(float x, float y, float w, string name, string info, Texture2D tex, bool wave,
+                     float[] tb, float[] tn, float corr, float amp, Color col, string anchorName)
         {
+            const float TW = 230;
+            float ww = w - TW - 12;
             SimTheme.Label(new Rect(x, y, 60, 24), name, 17, SimTheme.Text, true);
-            SimTheme.Label(new Rect(x + 60, y, w - 60, 24), info, 14, SimTheme.Sub);
-            var tr = new Rect(x, y + 30, w, 116);
+            SimTheme.Label(new Rect(x + 60, y, ww - 60, 24), info, 14, SimTheme.Sub);
+            var tr = new Rect(x, y + 30, ww, 120);
             SimTheme.Fill(tr, new Color(0.02f, 0.035f, 0.05f, 0.85f), 10f);
             GUI.DrawTexture(tr, tex);
             if (!wave) SimTheme.Label(tr, "전처리 파형 대기 중 (AI 서버 연결 후 표시)", 13, SimTheme.Dim, false, TextAnchor.MiddleCenter);
+            SimTheme.Label(new Rect(tr.x + 10, tr.y + 4, 200, 16), "최근 6초 · 공통 전처리", 11, SimTheme.Dim);
+
+            // 박동 형태: 기준 구간 중앙값 박동(흰색) vs 현재 30초 창 중앙값 박동(채널 색)
+            var br = new Rect(x + ww + 12, y + 30, TW, 120);
+            SimTheme.Fill(br, new Color(0.02f, 0.035f, 0.05f, 0.85f), 10f);
+            SimTheme.Label(new Rect(x + ww + 12, y, TW, 24), "박동 형태", 13, SimTheme.Sub, true);
+            bool hb = tb != null && tb.Length > 3, hn = tn != null && tn.Length > 3;
+            if (!hb && !hn) { SimTheme.Label(br, "기준 확정 후 표시", 12, SimTheme.Dim, false, TextAnchor.MiddleCenter); return; }
+            float lo = float.MaxValue, hi = float.MinValue;
+            if (hb) foreach (var v in tb) { lo = Mathf.Min(lo, v); hi = Mathf.Max(hi, v); }
+            if (hn) foreach (var v in tn) { lo = Mathf.Min(lo, v); hi = Mathf.Max(hi, v); }
+            float pad = (hi - lo) * 0.12f + 1e-3f; lo -= pad; hi += pad;
+            var plot = new Rect(br.x + 8, br.y + 8, br.width - 16, br.height - 30);
+            int n = hb ? tb.Length : tn.Length;
+            float pre = name == "ECG" ? (ai.Latest != null ? ai.Latest.ecg_tpre : 0.25f) : (ai.Latest != null ? ai.Latest.ppg_tpre : 0.45f);
+            float ax = plot.x + plot.width * Mathf.Clamp01(pre * 100f / Mathf.Max(1, n - 1));
+            for (float yy = plot.y; yy < plot.yMax; yy += 6) SimTheme.Fill(new Rect(ax, yy, 1, 3), new Color(1, 1, 1, 0.15f));
+            if (hb) Curve(plot, tb, lo, hi, BaseCol, 2f);
+            if (hn) Curve(plot, tn, lo, hi, col, 2.5f);
+            // 수치: 형태 상관 r, 진폭 비 (기준 = 1.00)
+            bool off = (corr > -2 && corr < 0.9f) || (amp > 0 && (amp < 0.7f || amp > 1.3f));
+            string m = corr > -2 ? $"형태 r {corr:F2}   진폭 {amp:F2}×" : "형태 –";
+            SimTheme.Label(new Rect(br.x + 10, br.yMax - 22, br.width - 20, 18), m, 12, off ? SimTheme.Amber : SimTheme.Sub, true);
+            // 범례 (제목 줄 오른쪽)
+            SimTheme.Fill(new Rect(br.xMax - 92, y + 11, 14, 3), BaseCol);
+            SimTheme.Label(new Rect(br.xMax - 74, y + 3, 30, 18), "기준", 11, SimTheme.Dim);
+            SimTheme.Fill(new Rect(br.xMax - 44, y + 11, 14, 3), col);
+            SimTheme.Label(new Rect(br.xMax - 26, y + 3, 30, 18), "현재", 11, SimTheme.Dim);
+            SimTheme.Label(new Rect(ax + 3, plot.y - 2, 80, 14), anchorName, 10, SimTheme.Dim);
+        }
+
+        /// <summary>연속 점을 이어 그림 (구간마다 세로로 채운 짧은 막대)</summary>
+        static void Curve(Rect r, float[] d, float lo, float hi, Color c, float th)
+        {
+            int n = d.Length;
+            if (n < 2) return;
+            float span = Mathf.Max(1e-6f, hi - lo);
+            for (int i = 0; i < n - 1; i++)
+            {
+                float x0 = r.x + r.width * i / (n - 1), x1 = r.x + r.width * (i + 1) / (n - 1);
+                float y0 = r.yMax - (d[i] - lo) / span * r.height, y1 = r.yMax - (d[i + 1] - lo) / span * r.height;
+                SimTheme.Fill(new Rect(x0, Mathf.Min(y0, y1) - th * 0.5f, Mathf.Max(1f, x1 - x0 + 0.5f), Mathf.Abs(y1 - y0) + th), c);
+            }
+        }
+
+        /// <summary>RR(ECG)·PP(PPG) 간격 최근 2분 + 기준 구간 중앙값 ± 산포 띠</summary>
+        void DrawTachogram(Rect R, AiUi r)
+        {
+            SimTheme.Label(new Rect(R.x, R.y, R.width, 20), "심박 간격 [ms] · 최근 2분   띠 = 개인 기준 중앙값 ± 산포", 13, SimTheme.Sub, true);
+            SimTheme.Fill(new Rect(R.xMax - 196, R.y + 8, 8, 8), EcgC, 4f); SimTheme.Label(new Rect(R.xMax - 184, R.y, 70, 20), "RR (ECG)", 11, SimTheme.Dim);
+            SimTheme.Fill(new Rect(R.xMax - 104, R.y + 8, 8, 8), PpgC, 4f); SimTheme.Label(new Rect(R.xMax - 92, R.y, 90, 20), "PP (PPG)", 11, SimTheme.Dim);
+            var g = new Rect(R.x + 44, R.y + 24, R.width - 44, R.height - 40);
+            SimTheme.Fill(g, new Color(0.02f, 0.035f, 0.05f, 0.85f), 8f);
+            bool hasE = r != null && r.ecg_tms != null && r.ecg_tms.Length > 0, hasP = r != null && r.ppg_tms != null && r.ppg_tms.Length > 0;
+            if (!hasE && !hasP) { SimTheme.Label(g, "첫 판정 후 표시", 12, SimTheme.Dim, false, TextAnchor.MiddleCenter); return; }
+            float bm = r.ecg_bm > 0 ? r.ecg_bm : r.ppg_bm, bs = r.ecg_bm > 0 ? r.ecg_bs : r.ppg_bs;
+            // 세로 범위: 기준 띠 ±3σ 와 (이상 간격 제외한) 점들을 함께 담음
+            float lo = bm > 0 ? bm - 3 * Mathf.Max(bs, 15f) : float.MaxValue, hi = bm > 0 ? bm + 3 * Mathf.Max(bs, 15f) : float.MinValue;
+            TachRange(r.ecg_tms, r.ecg_tbad, ref lo, ref hi); TachRange(r.ppg_tms, r.ppg_tbad, ref lo, ref hi);
+            lo = Mathf.Max(250f, lo - 20f); hi = Mathf.Min(2000f, hi + 20f);
+            _tg = g; _tlo = lo; _thi = hi;
+            if (r.ecg_bm > 0)
+            {
+                float y0 = TY(r.ecg_bm + r.ecg_bs), y1 = TY(r.ecg_bm - r.ecg_bs);
+                SimTheme.Fill(new Rect(g.x, y0, g.width, y1 - y0), SimTheme.A(EcgC, 0.12f));
+                SimTheme.Fill(new Rect(g.x, TY(r.ecg_bm), g.width, 1), SimTheme.A(EcgC, 0.5f));
+                SimTheme.Label(new Rect(R.x, TY(r.ecg_bm) - 9, 42, 18), $"{r.ecg_bm:F0}", 11, SimTheme.A(EcgC, 0.8f), false, TextAnchor.MiddleRight);
+            }
+            if (r.ppg_bm > 0) SimTheme.Fill(new Rect(g.x, TY(r.ppg_bm), g.width, 1), SimTheme.A(PpgC, 0.35f));
+            SimTheme.Label(new Rect(R.x, g.y - 4, 42, 16), $"{hi:F0}", 10, SimTheme.Dim, false, TextAnchor.MiddleRight);
+            SimTheme.Label(new Rect(R.x, g.yMax - 12, 42, 16), $"{lo:F0}", 10, SimTheme.Dim, false, TextAnchor.MiddleRight);
+            for (int k = 0; k <= 4; k++)
+            {
+                float tx = g.x + g.width * k / 4f;
+                SimTheme.Fill(new Rect(tx, g.y, 1, g.height), new Color(1, 1, 1, 0.05f));
+                SimTheme.Label(new Rect(tx - 30, g.yMax + 1, 60, 14), k == 4 ? "창 끝" : $"{-120 + 30 * k}s", 10, SimTheme.Dim, false, TextAnchor.MiddleCenter);
+            }
+            TachPts(r.ppg_tt, r.ppg_tms, r.ppg_tbad, SimTheme.A(PpgC, 0.75f), 3f);
+            TachPts(r.ecg_tt, r.ecg_tms, r.ecg_tbad, EcgC, 4f);
+        }
+
+        // 타코그램 좌표 변환 (현재 그리는 그래프 영역·세로 범위)
+        Rect _tg; float _tlo, _thi;
+        float TY(float v) => _tg.yMax - 4 - Mathf.Clamp01((v - _tlo) / Mathf.Max(1f, _thi - _tlo)) * (_tg.height - 8);
+        float TX(float t) => _tg.x + _tg.width * Mathf.Clamp01((t + 120f) / 120f);
+
+        static void TachRange(float[] v, int[] bad, ref float lo, ref float hi)
+        {
+            if (v == null) return;
+            for (int i = 0; i < v.Length; i++)
+                if (bad == null || i >= bad.Length || bad[i] == 0) { lo = Mathf.Min(lo, v[i]); hi = Mathf.Max(hi, v[i]); }
+        }
+
+        void TachPts(float[] tt, float[] v, int[] bad, Color c, float sz)
+        {
+            if (tt == null || v == null) return;
+            for (int i = 0; i < v.Length && i < tt.Length; i++)
+            {
+                bool b = bad != null && i < bad.Length && bad[i] != 0;
+                if (b && (v[i] < _tlo || v[i] > _thi)) continue;
+                SimTheme.Fill(new Rect(TX(tt[i]) - sz * 0.5f, TY(v[i]) - sz * 0.5f, sz, sz), b ? SimTheme.A(SimTheme.Gray, 0.6f) : c, sz * 0.5f);
+            }
+        }
+
+        /// <summary>기준 대비 이탈 칩: |z| 2 이상 주황, 3 이상 빨강 (z = (현재 − 기준 중앙값) / 산포, 모델 입력과 같은 값)</summary>
+        void DrawDeviationChips(float x, float y, float w, AiUi r)
+        {
+            if (r == null || !r.has_out) { SimTheme.Label(new Rect(x, y, w, 30), "기준 대비 지표: 첫 판정 후 표시", 13, SimTheme.Dim); return; }
+            float cx = x;
+            cx = ZChip(cx, y, $"HR {V(r.hr_ecg, "F0")} · 기준 {V(r.hr_base, "F0")}", r.zc_hr_30);
+            cx = ZChip(cx, y, $"RMSSD {V(r.rmssd_now, "F0")} · 기준 {V(r.rmssd_base, "F0")} ms", r.zc_rmssd_30);
+            cx = ZChip(cx, y, "SDNN", r.zc_sdnn_30);
+            cx = ZChip(cx, y, "5분 HR", r.zc_hr_300);
+            ZChip(cx, y, "5분 RMSSD", r.zc_rmssd_300);
+        }
+
+        static float ZChip(float x, float y, string label, float z)
+        {
+            bool has = z > -98f;
+            float az = Mathf.Abs(z);
+            Color c = !has ? SimTheme.Gray : az >= 3f ? SimTheme.Red : az >= 2f ? SimTheme.Amber : SimTheme.Sub;
+            string t = has ? $"{label}  z {(z >= 0 ? "+" : "")}{z:F1}" : $"{label}  z –";
+            float wdt = SimTheme.TextWidth(t, 12, true) + 22;
+            var rr = new Rect(x, y, wdt, 28);
+            SimTheme.Fill(rr, has && az >= 2f ? SimTheme.A(c, 0.16f) : new Color(1, 1, 1, 0.05f), 14f);
+            SimTheme.Outline(rr, has && az >= 2f ? SimTheme.A(c, 0.6f) : SimTheme.Line, 1f, 14f);
+            SimTheme.Label(rr, t, 12, has && az >= 2f ? c : SimTheme.Text, true, TextAnchor.MiddleCenter);
+            return x + wdt + 8;
         }
 
         // ---------------------------------------------------------------- 오른쪽 위: AI 판정
@@ -317,7 +461,7 @@ namespace CapstoneSim
             if (!Live || !ai.Latest.has_out) return;
             int lv = ai.Latest.level;
             if (lv < 1) return;
-            float left = 40 + 680 + 24, right = SimTheme.VW - 40 - 480 - 24, w = right - left;
+            float left = 40 + BioW + 24, right = SimTheme.VW - 40 - 480 - 24, w = right - left;
             if (w < 360) { left = SimTheme.VW * 0.5f - 300; w = 600; }
             var r = new Rect(left, 40, w, 64);
             bool drowsy = lv == 2;

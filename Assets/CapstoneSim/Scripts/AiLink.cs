@@ -43,6 +43,14 @@ namespace CapstoneSim
         public int[] hist_lv;
         public float wave_fs;
         public float[] ecg_w, ppg_w;
+        // 기준(baseline) 대비 비교 — 박동 형태 템플릿 (기준 범위로 정규화), RR/PP 타코그램, z
+        public float ecg_tpre, ppg_tpre, ecg_r = -9, ppg_r = -9, ecg_amp = -1, ppg_amp = -1;
+        public float[] ecg_tb, ecg_tn, ppg_tb, ppg_tn;
+        public float[] ecg_tt, ecg_tms, ppg_tt, ppg_tms;
+        public int[] ecg_tbad, ppg_tbad;
+        public float ecg_bm = -1, ecg_bs = -1, ppg_bm = -1, ppg_bs = -1;
+        public float zc_hr_30 = -99, zc_rmssd_30 = -99, zc_sdnn_30 = -99, zc_hr_300 = -99, zc_rmssd_300 = -99;
+        public float hr_base = -1, rmssd_now = -1, rmssd_base = -1;
     }
 
     public class AiLink : MonoBehaviour

@@ -155,7 +155,7 @@ namespace CapstoneSim
             ShotDriver("05_driver_start");
 
             // ---- 2) 자율주행 ----
-            car.externalControl = true;
+            if (Arg("drive") != "0") car.externalControl = true;
             _driving = true;
             yield return new WaitForSeconds(9f);
             Diagnose(car, "직선 주행 9 s");
@@ -194,7 +194,7 @@ namespace CapstoneSim
 
         void FixedUpdate()
         {
-            if (!_driving || _sim == null || _sim.Car == null) return;
+            if (!_driving || _sim == null || _sim.Car == null || Arg("drive") == "0") return;   // drive=0: 러너는 운전하지 않음 (메뉴 모의 주행 확인용)
             var car = _sim.Car;
             var ts = _sim.Track.Query(car.transform.position, car.transform.forward);
             float v = Mathf.Max(1f, car.SpeedKmh / 3.6f);

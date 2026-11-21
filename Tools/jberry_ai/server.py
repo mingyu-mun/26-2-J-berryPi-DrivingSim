@@ -293,6 +293,25 @@ class Server:
                       hr_ecg=r3(w.hr_ecg, 1), hr_ppg=r3(w.hr_ppg, 1), logit_ep=r3(r.logit_ep),
                       win_end=round(r.t_end, 1), proc_ms=round(r.proc_ms, 1),
                       out_age=round(s.t_rel() - r.t_end, 1), th_on=e.cfg.th_on, th_off=e.cfg.th_off)
+            ex = r.extra or {}
+            for ch in ("ecg", "ppg"):
+                o = ex.get(ch) or {}
+                pk[f"{ch}_tpre"] = o.get("pre", 0.0)
+                pk[f"{ch}_tb"] = [round(v, 3) for v in o.get("base", [])]
+                pk[f"{ch}_tn"] = [round(v, 3) for v in o.get("now", [])]
+                pk[f"{ch}_r"] = round(o["r"], 3) if o.get("r") is not None and math.isfinite(o["r"]) else -9.0
+                pk[f"{ch}_amp"] = r3(o.get("amp"), 2)
+                pk[f"{ch}_tt"] = o.get("tach_t", [])
+                pk[f"{ch}_tms"] = o.get("tach_ms", [])
+                pk[f"{ch}_tbad"] = o.get("tach_bad", [])
+                pk[f"{ch}_bm"] = r3(o.get("base_mean"), 1)
+                pk[f"{ch}_bs"] = r3(o.get("base_sd"), 1)
+            for k in ("hr_30", "rmssd_30", "sdnn_30", "hr_300", "rmssd_300"):
+                v = ex.get(f"z_{k}")
+                pk[f"zc_{k}"] = round(v, 2) if v is not None and math.isfinite(v) else -99.0
+            pk["hr_base"] = r3(ex.get("hr_base"), 1)
+            pk["rmssd_now"] = r3(ex.get("rmssd_now"), 1)
+            pk["rmssd_base"] = r3(ex.get("rmssd_base"), 1)
             if r.zr is not None:
                 top = np.argsort(-np.abs(r.zr))[:3]
                 pk["z_names"] = [e.names[i] for i in top]

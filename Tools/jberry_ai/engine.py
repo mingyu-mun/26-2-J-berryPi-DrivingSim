@@ -95,6 +95,34 @@ def use_realtime_detectors(on: bool = True):
 
 use_realtime_detectors(True)
 
+# ---------------------------------------------------------------- 화면용 '기준 대비' 비교 (모델 입력과 무관, 표시 전용)
+# 박동 형태 템플릿: 공통 전처리(100 Hz) 신호에서 R-peak(ECG) / 수축기 최고점(PPG) 을 기준으로 잘라 표본별 중앙값
+TPL_WIN = {"ecg": (0.25, 0.45), "ppg": (0.45, 0.40)}      # (앞, 뒤) [s]
+
+
+def beat_template(filt: np.ndarray, beats: np.ndarray, a: float, b: float, pre: float, post: float, fs: float = 100.0):
+    """filt 의 [a, b) 안에 있는 박동마다 [bt−pre, bt+post) 를 잘라 표본별 중앙값. 박동 3개 미만이면 None."""
+    L = int(round((pre + post) * fs))
+    segs = []
+    for bt in beats:
+        if bt - pre < a or bt + post > b:
+            continue
+        i0 = int(round((bt - pre) * fs))
+        if 0 <= i0 and i0 + L <= len(filt):
+            segs.append(filt[i0:i0 + L])
+    return np.median(np.stack(segs), 0) if len(segs) >= 3 else None
+
+
+def rr_stats(rr, a: float, b: float):
+    """[a, b) 안 정상 RR 의 중앙값과 견고한 산포 (사분위 범위/1.349) [ms] — 몇 개 남은 잘못 잡힌 박동에 끌려가지 않게"""
+    t = rr.rr_t
+    m = (t >= a) & (t < b) & ~rr.abnormal
+    v = rr.rr[m] * 1000.0
+    if len(v) < 5:
+        return None, None
+    q1, q3 = np.percentile(v, [25, 75])
+    return float(np.median(v)), float((q3 - q1) / 1.349)
+
 
 def sig(x):
     return float(1.0 / (1.0 + math.exp(-float(x))))
@@ -121,6 +149,7 @@ class WindowResult:
     valid_ppg: bool
     proc_ms: float
     zr: np.ndarray | None = None
+    extra: dict | None = None         # 화면용: 박동 형태 템플릿·RR 타코그램 (기준 대비)
 
 
 class StreamEngine:
@@ -281,6 +310,13 @@ class StreamEngine:
             self.R[:, c] = cut(prep(rec.signals[ch], rec.fs[ch], ch), rs)[0]
         if self.base_status != "retry_required":
             self.base_status = "ready"
+        # 화면용: 기준 구간의 박동 형태 템플릿과 RR 평균·산포
+        self.base_tpl, self.base_rr = {}, {}
+        ins = _input_spec(self.spec, rec)
+        for ch, r_ in (("ecg", rr), ("ppg", prr)):
+            filt, _ = prepare_channel(rec.signals[ch], rec.fs[ch], ch, ins, False)
+            self.base_tpl[ch] = beat_template(filt, r_.beat_t, a, b, *TPL_WIN[ch], fs=float(self.spec.fs))
+            self.base_rr[ch] = rr_stats(r_, a, b)
 
     def use_baseline_recording(self, ecg, ppg, fs_ecg: float, fs_ppg: float, name: str = "file") -> tuple:
         """별도 기준(baseline) 측정 파일로 개인 기준을 정한다. 이후 들어오는 입력은 처음(0 s)부터 바로 판정.
@@ -367,7 +403,52 @@ class StreamEngine:
                      p_ppg=sig(lg_ppg) if valid_ppg else None, q_ppg=q_ppg,
                      hr_ecg=hr_e, hr_ppg=hr_p, can_drowsy=None)
         st = self.sm.step(w)
-        return WindowResult(t, t + 30, w, st, lg_ep, lg_ppg, valid, valid_ppg, (time.perf_counter() - t0) * 1000, zr[0])
+        try:
+            extra = self._compare(rec, rr, prr, t, zr[0], prow, row)
+        except Exception as ex:  # 표시용 계산 실패가 판정을 막지 않게
+            extra = {"error": str(ex)}
+        return WindowResult(t, t + 30, w, st, lg_ep, lg_ppg, valid, valid_ppg, (time.perf_counter() - t0) * 1000, zr[0], extra)
+
+    def _compare(self, rec, rr, prr, t: float, zr_ep, prow: dict, row: dict) -> dict:
+        """현재 30초 창 vs 개인 기준: 박동 형태 템플릿, RR/PP 타코그램(최근 120초), 주요 z."""
+        fs100 = float(self.spec.fs)
+        ins = getattr(self, "_ins", None) or _input_spec(self.spec, rec)
+        out = {}
+        for ch, r_ in (("ecg", rr), ("ppg", prr)):
+            pre, post = TPL_WIN[ch]
+            s0, s1 = max(0.0, t - 10.0), min(self.duration(), t + 35.0)
+            seg = rec.signals[ch][int(s0 * self.fs[ch]): int(s1 * self.fs[ch])]
+            filt, _ = prepare_channel(seg, self.fs[ch], ch, ins, False)
+            now = beat_template(filt, r_.beat_t - s0, t - s0, t + 30 - s0, pre, post, fs100)
+            base = (getattr(self, "base_tpl", {}) or {}).get(ch)
+            o = {"pre": pre}
+            if base is not None:
+                ref = float(np.median(base)); rng = float(np.ptp(base)) or 1.0
+                o["base"] = ((base - ref) / rng).tolist()
+                if now is not None:
+                    o["now"] = ((now - float(np.median(now))) / rng).tolist()
+                    o["r"] = float(np.corrcoef(base, now)[0, 1])
+                    o["amp"] = float(np.ptp(now) / rng)
+            elif now is not None:
+                rng = float(np.ptp(now)) or 1.0
+                o["now"] = ((now - float(np.median(now))) / rng).tolist()
+            # 타코그램: 창 끝 기준 최근 120초 RR [ms], 이상 간격 표시
+            te = t + 30.0
+            m = (r_.rr_t >= te - 120.0) & (r_.rr_t <= te)
+            o["tach_t"] = (r_.rr_t[m] - te).round(2).tolist()
+            o["tach_ms"] = (r_.rr[m] * 1000.0).round(1).tolist()
+            o["tach_bad"] = r_.abnormal[m].astype(int).tolist()
+            bm, bs = (getattr(self, "base_rr", {}) or {}).get(ch, (None, None))
+            o["base_mean"], o["base_sd"] = bm, bs
+            out[ch] = o
+        nm = {n: i for i, n in enumerate(self.names)}
+        for k in ("hr_30", "rmssd_30", "sdnn_30", "hr_300", "rmssd_300"):
+            out[f"z_{k}"] = float(zr_ep[nm[k]]) if k in nm else None
+        prof = self.prof.iloc[0] if self.prof is not None else None
+        out["hr_base"] = float(prof["m_hr_30"]) if prof is not None and np.isfinite(prof.get("m_hr_30", np.nan)) else None
+        out["rmssd_now"] = _f(row.get("rmssd_30"))
+        out["rmssd_base"] = float(prof["m_rmssd_30"]) if prof is not None and np.isfinite(prof.get("m_rmssd_30", np.nan)) else None
+        return out
 
     # ------------------------------------------------------------ 화면용 전처리 파형 (공통 전처리 100 Hz)
     def preview(self, ch: str, sec: float = 8.0, tail: float = 0.0):

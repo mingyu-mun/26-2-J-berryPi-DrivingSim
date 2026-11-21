@@ -84,6 +84,7 @@ namespace CapstoneSim
         public float SessionStartRealtime { get; private set; }
         FollowCamera.Mode _driveCamMode = FollowCamera.Mode.Driver;
         Vector3 _spawnPos; Quaternion _spawnRot;
+        CarAutopilot _autopilot;
 
         Bounds _carBounds = new Bounds(new Vector3(0f, 0.75f, 0f), new Vector3(1.8f, 1.5f, 4.4f));
 
@@ -243,7 +244,9 @@ namespace CapstoneSim
         {
             InSession = false;
             if (Cam && Cam.mode != FollowCamera.Mode.Showcase) { _driveCamMode = Cam.mode; Cam.mode = FollowCamera.Mode.Showcase; }
-            Car.externalControl = true; Car.extThrottle = 0f; Car.extBrake = 1f; Car.extSteerWheelDeg = 0f;
+            // 메뉴 배경: 차로를 따라 달리는 모의 주행 (정지 + 브레이크 유지는 후진으로 이어지므로 쓰지 않음)
+            if (!_autopilot) { _autopilot = gameObject.AddComponent<CarAutopilot>(); _autopilot.car = Car; _autopilot.track = Track; }
+            _autopilot.enabled = true;
             Logger.allowInput = false;
             Hud.enabled = false;
             Menu.Show(page);
@@ -256,6 +259,9 @@ namespace CapstoneSim
             Session = c;
             Menu.Hide();
             if (Cam) Cam.mode = _driveCamMode;
+            // 모의 주행을 끄고 맵 첫 지점(직선 구간 시작, 시작 차로)으로 순간이동해 정지 상태로 시작
+            if (_autopilot) _autopilot.enabled = false;
+            ResetCarToStart();
             Car.externalControl = false;
             Logger.allowInput = true;
             Logger.participantId = string.IsNullOrWhiteSpace(c.participantId) ? participantId : c.participantId;
@@ -302,10 +308,17 @@ namespace CapstoneSim
             if (Live) { Destroy(Live); Live = null; }
             Panels = null; Ai = null; Bio = null;
             InSession = false;
+            ResetCarToStart();
+            if (toMenu) EnterMenu("home");
+        }
+
+        void ResetCarToStart()
+        {
             Car.Teleport(_spawnPos + Vector3.up * 0.3f, _spawnRot);
             Car.SetForwardSpeed(0f);
+            Car.extThrottle = 0f; Car.extBrake = 0f; Car.extSteerWheelDeg = 0f;
             Car.TurnSignal = 0;
-            if (toMenu) EnterMenu("home");
+            if (Logger) Logger.LogEvent("RESET", "session_start");
         }
 
         /// <summary>실측 모드 수신기 (메뉴의 수신 시험과 세션이 같은 것을 쓴다)</summary>
