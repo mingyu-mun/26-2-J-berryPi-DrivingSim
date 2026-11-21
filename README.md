@@ -8,7 +8,7 @@
 
 | 메인 메뉴 | 주행 화면 |
 |---|---|
-| ![메인 메뉴](docs/img/menu_home.png) | ![주행 · 개인 기준 대비](docs/img/screen_baseline_compare.png) |
+| ![메인 메뉴](docs/img/menu_home.png) | ![주행 화면](docs/img/screen_baseline_overlay.png) |
 
 ```
  Unity (센서·차량 에뮬레이터)                               Tools/jberry_ai/server.py  (Python .venv, torch CPU)

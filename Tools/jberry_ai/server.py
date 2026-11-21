@@ -55,6 +55,16 @@ def has(x):
         return False
 
 
+def align_base(bn: np.ndarray, xn: np.ndarray, fs: float) -> np.ndarray:
+    """기준 파형 bn 에서 현재 파형 xn 과 길이가 같은 구간을 고름. 시작점은 bn 의 처음 3초 안에서,
+    xn 의 처음 1.5초와 상관이 가장 큰 곳 → 첫 박동의 위상이 맞고, 그 뒤로 박동이 어긋나는 정도가 심박 차이를 보여 줌."""
+    n, m = len(xn), min(len(xn), int(1.5 * fs))
+    lags = max(1, min(int(3.0 * fs), len(bn) - n + 1))
+    c = np.correlate(bn[:lags + m - 1], xn[:m], "valid")
+    L = int(np.argmax(c)) if len(c) else 0
+    out = bn[L:L + n]
+    return np.pad(out, (0, n - len(out))) if len(out) < n else out
+
 class Session:
     """Unity Play 한 번 = 세션 하나. 새 hello(세션 id 다름) 가 오면 새로 만든다 (규약: 새 session_id + 상태 머신 reset)."""
 
@@ -293,25 +303,9 @@ class Server:
                       hr_ecg=r3(w.hr_ecg, 1), hr_ppg=r3(w.hr_ppg, 1), logit_ep=r3(r.logit_ep),
                       win_end=round(r.t_end, 1), proc_ms=round(r.proc_ms, 1),
                       out_age=round(s.t_rel() - r.t_end, 1), th_on=e.cfg.th_on, th_off=e.cfg.th_off)
-            ex = r.extra or {}
             for ch in ("ecg", "ppg"):
-                o = ex.get(ch) or {}
-                pk[f"{ch}_tpre"] = o.get("pre", 0.0)
-                pk[f"{ch}_tb"] = [round(v, 3) for v in o.get("base", [])]
-                pk[f"{ch}_tn"] = [round(v, 3) for v in o.get("now", [])]
-                pk[f"{ch}_r"] = round(o["r"], 3) if o.get("r") is not None and math.isfinite(o["r"]) else -9.0
-                pk[f"{ch}_amp"] = r3(o.get("amp"), 2)
-                pk[f"{ch}_tt"] = o.get("tach_t", [])
-                pk[f"{ch}_tms"] = o.get("tach_ms", [])
-                pk[f"{ch}_tbad"] = o.get("tach_bad", [])
-                pk[f"{ch}_bm"] = r3(o.get("base_mean"), 1)
-                pk[f"{ch}_bs"] = r3(o.get("base_sd"), 1)
-            for k in ("hr_30", "rmssd_30", "sdnn_30", "hr_300", "rmssd_300"):
-                v = ex.get(f"z_{k}")
-                pk[f"zc_{k}"] = round(v, 2) if v is not None and math.isfinite(v) else -99.0
-            pk["hr_base"] = r3(ex.get("hr_base"), 1)
-            pk["rmssd_now"] = r3(ex.get("rmssd_now"), 1)
-            pk["rmssd_base"] = r3(ex.get("rmssd_base"), 1)
+                bm = ((getattr(e, "base_rr", None) or {}).get(ch) or (None, None))[0]
+                pk[f"{ch}_hrb"] = round(60000.0 / bm, 1) if bm else -1
             if r.zr is not None:
                 top = np.argsort(-np.abs(r.zr))[:3]
                 pk["z_names"] = [e.names[i] for i in top]
@@ -331,8 +325,17 @@ class Server:
                     fs, x, t0 = pv
                     n = int(self.a.wave_sec * fs)
                     x = x[-n - int(1.0 * fs): len(x) - int(1.0 * fs)]       # 끝 1초는 필터 가장자리라 버림
-                    sd = float(np.std(x)) or 1.0
-                    pk[f"{ch}_w"] = [round(float(v), 3) for v in (x - np.median(x)) / sd]
+                    bw = (getattr(e, "base_wave", None) or {}).get(ch)
+                    if bw is not None:
+                        # 기준 파형의 산포로 둘 다 나눔 → 진폭 차이가 그대로 보임
+                        sd = float(np.std(bw)) or 1.0
+                        xn = (x - np.median(x)) / sd
+                        bn = (bw - np.median(bw)) / sd
+                        pk[f"{ch}_b"] = [round(float(v), 3) for v in align_base(bn, xn, fs)]
+                    else:
+                        sd = float(np.std(x)) or 1.0
+                        xn = (x - np.median(x)) / sd
+                    pk[f"{ch}_w"] = [round(float(v), 3) for v in xn]
                     pk["wave_fs"] = fs
                     pk[f"{ch}_w_t1"] = round(t0 + (len(x) + int(1.0 * fs)) / fs - 1.0, 2)
         return pk
