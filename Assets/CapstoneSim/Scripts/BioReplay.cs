@@ -4,7 +4,7 @@
 //         <폴더>/meta.json  (fs.ecg, fs.ppg …)
 //         <폴더>/ecg.csv, ppg.csv  (value 열 하나, 각자 원래 샘플링 주기 — 예: ECG ≈435 Hz, PPG ≈100 Hz)
 //         <폴더>/labels.csv  (선택: start_s,end_s,label — 화면에 '참고 라벨'로만 표시, 모델 입력 아님)
-//   기본 폴더: <프로젝트>/SimLogs/bio/rec_20261118
+//   기본 폴더: <프로젝트>/Assets/StreamingAssets/Replays/<기록> (메인 메뉴에서 선택), 없으면 SimLogs/bio/<기록>
 // 두 채널은 각자의 주기로 PC 벽시계(Stopwatch)에 맞춰 나온다. AiLink 가 Drain 으로 꺼내 추론 서버에 보낸다.
 // 원신호 값은 바꾸지 않는다 (필터·전처리는 서버가 저장소 코드로 한다).
 using System;
@@ -17,25 +17,22 @@ using UnityEngine;
 
 namespace CapstoneSim
 {
-    public class BioReplay : MonoBehaviour
+    public class BioReplay : BioSource
     {
-        [Tooltip("세션 폴더 (meta.json + ecg.csv + ppg.csv). 비우면 <프로젝트>/SimLogs/bio/rec_20261118")]
+        [Tooltip("세션 폴더 (meta.json + ecg.csv + ppg.csv). 비우면 리플레이 라이브러리의 첫 기록 (StreamingAssets/Replays → SimLogs/bio)")]
         public string sessionDir = "";
-        [Tooltip("기록의 몇 초 지점부터 재생할지")] public float startOffsetSec = 0f;
-
-        public bool Loaded { get; private set; }
         public bool Finished { get; private set; }
-        public string Status { get; private set; } = "";
-        public string SessionName { get; private set; } = "";
-        public double FsEcg { get; private set; }
-        public double FsPpg { get; private set; }
-        public float DurationSec { get; private set; }
+        public override string Origin => "recorded";
+        float _duration = -1f, _fileTime;
+        string _segLabel = "";
+        public override float DurationSec => _duration;
         /// <summary>현재 재생 위치 (기록 기준 초)</summary>
-        public float FileTimeSec { get; private set; }
+        public override float FileTimeSec => _fileTime;
         /// <summary>Play 시작 후 흘려보낸 시간 (세션 시각, 초)</summary>
-        public float ElapsedSec => _sw == null ? 0f : (float)_sw.Elapsed.TotalSeconds;
-        public string SegmentLabel { get; private set; } = "";
-        public string SessionPath { get; private set; } = "";
+        public override float ElapsedSec => _sw == null ? 0f : (float)_sw.Elapsed.TotalSeconds;
+        public override string SegmentLabel => _segLabel;
+        /// <summary>labels.csv 구간 (메뉴 타임라인·화면 표시용)</summary>
+        public System.Collections.Generic.List<(float start, float end, string label)> Segments => _segments;
 
         float[] _ecg, _ppg;
         readonly List<(float start, float end, string label)> _segments = new List<(float, float, string)>();
@@ -44,15 +41,13 @@ namespace CapstoneSim
         readonly List<float> _outE = new List<float>(4096), _outP = new List<float>(1024);
         bool _begun;
 
-        public void Begin() { if (_begun) return; _begun = true; Load(); }
+        public override void Begin() { if (_begun) return; _begun = true; Load(); }
         void Start() { Begin(); }
 
         public string ResolveDir()
         {
-            string p = string.IsNullOrWhiteSpace(sessionDir)
-                ? Path.Combine(Application.dataPath, "..", "SimLogs", "bio", "rec_20261118")
-                : sessionDir;
-            return Path.GetFullPath(p);
+            if (!string.IsNullOrWhiteSpace(sessionDir)) return System.IO.Path.GetFullPath(sessionDir);
+            return ReplayLibrary.DefaultReplayDir() ?? "";
         }
 
         static float[] ReadValues(string path)
@@ -106,7 +101,7 @@ namespace CapstoneSim
             }
             catch (Exception e) { Status = "생체 기록 읽기 실패: " + e.Message; UnityEngine.Debug.LogError("[BioReplay] " + Status); return; }
 
-            DurationSec = (float)Math.Min(_ecg.Length / FsEcg, _ppg.Length / FsPpg);
+            _duration = (float)Math.Min(_ecg.Length / FsEcg, _ppg.Length / FsPpg);
             var inv = CultureInfo.InvariantCulture;
             string lab = Path.Combine(dir, "labels.csv");
             if (File.Exists(lab))
@@ -135,13 +130,13 @@ namespace CapstoneSim
             for (; _eIdx < eT; _eIdx++) _outE.Add(_ecg[_eIdx]);
             for (; _pIdx < pT; _pIdx++) _outP.Add(_ppg[_pIdx]);
             if (_eIdx >= _ecg.Length || _pIdx >= _ppg.Length) { Finished = true; Status += " · 재생 끝"; }
-            FileTimeSec = (float)(_eIdx / FsEcg);
-            SegmentLabel = "";
-            foreach (var s in _segments) if (FileTimeSec >= s.start && FileTimeSec < s.end) { SegmentLabel = s.label; break; }
+            _fileTime = (float)(_eIdx / FsEcg);
+            _segLabel = "";
+            foreach (var s in _segments) if (_fileTime >= s.start && _fileTime < s.end) { _segLabel = s.label; break; }
         }
 
         /// <summary>쌓인 표본을 꺼냄 (각 채널 원래 주기). maxEcg 로 한 번에 꺼낼 양을 제한</summary>
-        public bool Drain(out float[] ecg, out float[] ppg, int maxEcg = 2200)
+        public override bool Drain(out float[] ecg, out float[] ppg, int maxEcg = 2200)
         {
             ecg = ppg = null;
             if (_outE.Count == 0 && _outP.Count == 0) return false;

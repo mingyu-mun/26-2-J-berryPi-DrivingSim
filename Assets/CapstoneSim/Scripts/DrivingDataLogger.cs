@@ -32,7 +32,7 @@ namespace CapstoneSim
         public CarController car;
         public TrackBuilder track;
         [Tooltip("있으면 AI 판정·생체 replay 위치도 함께 기록")] public AiLink ai;
-        public BioReplay bio;
+        public BioSource bio;
 
         public bool IsRecording { get; private set; }
         public string CurrentFile { get; private set; } = "";
@@ -81,8 +81,12 @@ namespace CapstoneSim
             return Path.GetFullPath(f);
         }
 
+        /// <summary>메인 메뉴에서는 L/M 키를 받지 않는다</summary>
+        [HideInInspector] public bool allowInput = true;
+
         void Update()
         {
+            if (!allowInput) return;
             if (SimInput.ToggleRecordPressed())
             {
                 if (IsRecording) StopRecording(); else StartRecording();

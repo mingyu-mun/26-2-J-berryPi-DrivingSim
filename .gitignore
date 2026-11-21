@@ -43,3 +43,8 @@ __pycache__/
 # 과거 복사 실수로 생긴 중복 폴더
 /Assets/CapstoneDrivingSim/
 /Assets/CapstoneDrivingSim.meta
+
+# 실측 생체 기록 (개인 데이터) — 유니티 안 리플레이 폴더도 올리지 않음. README.txt 만 유지
+/Assets/StreamingAssets/Replays/*
+!/Assets/StreamingAssets/Replays/README.txt
+!/Assets/StreamingAssets/Replays/README.txt.meta

@@ -14,8 +14,11 @@ convert_recording.py — 팀 측정 프로그램 기록(zip 또는 폴더) → �
     모델 입력이 아니라 화면 참고용 (참가자 자기보고)
 
 사용:
-  python Tools/convert_recording.py "C:/Users/<me>/Downloads/측정 26.11.18 19 42.zip" --out SimLogs/bio/rec_20261118
-주의: 결과물은 원신호(개인 생체 데이터)다. SimLogs/ 는 .gitignore 에 들어 있으니 저장소에 올리지 말 것.
+  # 리플레이용 (유니티 안에 넣기)
+  python Tools/convert_recording.py "C:/Users/<me>/Downloads/측정 26.11.18 19 42.zip" --out Assets/StreamingAssets/Replays/rec_20261118
+  # 개인 기준(baseline) 측정 파일 — 안정 상태 구간만 잘라서 (예: 처음 8분)
+  python Tools/convert_recording.py "<측정 zip>" --out Assets/StreamingAssets/Replays/rec_20261118_baseline --role baseline --end 480
+주의: 결과물은 원신호(개인 생체 데이터)다. StreamingAssets/Replays/ 와 SimLogs/ 는 .gitignore 대상이니 저장소에 올리지 말 것.
 """
 from __future__ import annotations
 
@@ -66,6 +69,10 @@ def main():
     ap.add_argument("src", help="측정 zip 또는 폴더")
     ap.add_argument("--out", required=True, help="세션 폴더 (예: SimLogs/bio/rec_20261118)")
     ap.add_argument("--ppg", choices=["ir", "red"], default="ir")
+    ap.add_argument("--start", type=float, default=0.0, help="자를 구간 시작 [s, 두 채널 맞춘 뒤 기준]")
+    ap.add_argument("--end", type=float, default=None, help="자를 구간 끝 [s]")
+    ap.add_argument("--role", choices=["replay", "baseline"], default="replay",
+                    help="baseline: 메인 메뉴의 '기준 측정 파일' 목록에 표시 (개인 기준 측정, 보통 5~10분 안정 상태)")
     a = ap.parse_args()
     src, out = Path(a.src), Path(a.out)
     out.mkdir(parents=True, exist_ok=True)
@@ -81,10 +88,16 @@ def main():
     te, ve, tp, vp = te[ke], ve[ke], tp[kp], vp[kp]
     fs_e = (len(ve) - 1) / (te[-1] - te[0])
     fs_p = (len(vp) - 1) / (tp[-1] - tp[0])
+    # 구간 자르기 (균일 간격 가정이므로 표본 번호로 자른다)
+    c0 = max(0.0, a.start)
+    c1 = a.end
+    ve = ve[int(c0 * fs_e): (int(c1 * fs_e) if c1 else len(ve))]
+    vp = vp[int(c0 * fs_p): (int(c1 * fs_p) if c1 else len(vp))]
+    dur = min(len(ve) / fs_e, len(vp) / fs_p)
     pd.DataFrame({"value": ve}).to_csv(out / "ecg.csv", index=False)
     pd.DataFrame({"value": vp}).to_csv(out / "ppg.csv", index=False)
 
-    # 라벨: 블록 끝 표시 → 구간
+    # 라벨: 블록 끝 표시 → 구간 (잘라낸 구간 기준으로 옮기고 잘라냄)
     rows = []
     if "라벨링" in e.columns:
         lab = e["라벨링"].iloc[np.flatnonzero(ke)].fillna("").astype(str).to_numpy()
@@ -92,18 +105,21 @@ def main():
         for i in np.flatnonzero(lab != ""):
             t_end = float(te[i] - t0)
             m = re.search(r"(정상|졸음|주의|피로)", lab[i])
-            rows.append((round(max(prev, 0.0), 2), round(t_end, 2), m.group(1) if m else lab[i], lab[i]))
+            s0, s1 = max(prev, c0) - c0, min(t_end, c0 + dur) - c0
+            if s1 > s0:
+                rows.append((round(float(s0), 2), round(float(s1), 2), m.group(1) if m else lab[i], lab[i]))
             prev = t_end
     pd.DataFrame(rows, columns=["start_s", "end_s", "label", "source_marker"]).to_csv(out / "labels.csv", index=False, encoding="utf-8")
 
-    meta = {"dataset_id": "jberry_sensor", "subject_id": "User1", "session_id": out.name,
-            "fs": {"ecg": fs_e, "ppg": fs_p}, "is_rest": False, "prefiltered": False, "t_offset": float(t0),
-            "source": {"ecg": f"{ename} · ECG원본 (ADC)", "ppg": f"{pname} · {pcol}", "input": src.name},
+    meta = {"dataset_id": "jberry_sensor", "subject_id": "User1", "session_id": out.name, "role": a.role,
+            "fs": {"ecg": fs_e, "ppg": fs_p}, "duration_s": round(dur, 3), "is_rest": a.role == "baseline",
+            "prefiltered": False, "t_offset": float(t0 + c0),
+            "source": {"ecg": f"{ename} · ECG원본 (ADC)", "ppg": f"{pname} · {pcol}", "input": src.name,
+                       "range_s": [c0, c0 + dur]},
             "note": "두 채널 시작 시각을 맞춤(t_offset=원본 기록 시각). fs=(표본수-1)/기간, 균일 간격 가정",
             "labels": "labels.csv: 원본 '라벨링' 열의 블록 끝 표시를 구간으로 바꾼 참고 라벨 (모델 입력 아님)"}
     (out / "meta.json").write_text(json.dumps(meta, ensure_ascii=False, indent=1), encoding="utf-8")
-    dur = min(len(ve) / fs_e, len(vp) / fs_p)
-    print(f"저장: {out}  ECG {fs_e:.2f} Hz · PPG {fs_p:.2f} Hz · {dur / 60:.1f}분 · 라벨 구간 {len(rows)}개 (t_offset {t0:.2f}s)")
+    print(f"저장: {out}  [{a.role}] ECG {fs_e:.2f} Hz · PPG {fs_p:.2f} Hz · {dur / 60:.1f}분 · 라벨 구간 {len(rows)}개 (t_offset {t0 + c0:.2f}s)")
     for r in rows:
         print("   ", r)
 

@@ -8,7 +8,7 @@ server.py — Unity 시뮬레이터 ↔ J_Berry PI 실제 모델(S1-EP + 상태 
                                        └─ (선택) --webboard http://127.0.0.1:8000 → /api/events
 
 규약(WEBBOARD_DATA_CONTRACT v1.2) 지키는 점
-  · 생체 출처 bio_origin = "recorded" (기록 재생), CAN 출처 can_origin = "simulated" (시뮬레이터 합성)
+  · 생체 출처 bio_origin = "recorded" (기록 재생) 또는 "live" (실측 모드), CAN 출처 can_origin = "simulated" (시뮬레이터 합성)
   · can_drowsy 는 검증된 규칙이 없으므로 항상 null. 상태는 StateMachineV2.step 출력만 쓴다 (UI 가 따로 판정하지 않음)
   · 값이 없으면 null (Unity 로 보내는 UI 패킷은 JsonUtility 제약 때문에 -1 + has_* 플래그로 표시)
 
@@ -67,6 +67,7 @@ class Session:
             self.mode = "causal"
         self.replay_name = hello.get("replay") or ""
         self.replay_offset = float(hello.get("replay_offset") or 0.0)
+        self.origin = hello.get("origin") if hello.get("origin") in ("recorded", "live") else "recorded"
         self.eng = StreamEngine(self.fs_ecg, self.fs_ppg, mode=self.mode, session_id=self.id,
                                 force_baseline=True) if self.fs_ecg > 0 and self.fs_ppg > 0 else None
         self.t_start = time.time()
@@ -148,9 +149,12 @@ class Server:
                 if self.s:
                     self.s.close()
                 self.s = Session(m, self.a, self.log_dir)
-                pre = m.get("preroll_dir"), float(m.get("preroll_sec") or 0)
-                if pre[0] and pre[1] > 0:
-                    self.preroll(Path(pre[0]), pre[1])
+                if m.get("baseline_dir"):
+                    self.baseline_file(Path(m["baseline_dir"]))
+                pre_dir, pre_sec = m.get("preroll_dir"), float(m.get("preroll_sec") or 0)
+                if pre_dir and pre_sec > 0:
+                    # 자동 기준: 기록 0 s ~ 시작 위치 / 기준 파일: 시작 위치 앞 최대 300 s (장기 특징 창 채우기)
+                    self.preroll(Path(pre_dir), max(0.0, self.s.replay_offset - pre_sec), pre_sec)
             return
         s = self.s
         if s is None or s.eng is None:
@@ -162,16 +166,31 @@ class Server:
         elif kind == "can":
             self.on_can(m)
 
-    def preroll(self, d: Path, sec: float):
-        """기록 앞 sec 초를 빠르게 먼저 넣는다 (기준 수집을 기다리지 않고 시연하기 위한 옵션, 화면에 표시됨).
-        실제 측정값을 그대로 넣을 뿐 값을 만들지 않는다."""
+    def baseline_file(self, d: Path):
+        """별도 기준 측정 파일(세션 폴더)로 개인 기준을 먼저 정한다 → 입력 0 s 부터 바로 판정."""
+        import pandas as pd
+        s = self.s
+        try:
+            meta = json.loads((d / "meta.json").read_text(encoding="utf-8"))
+            e = pd.read_csv(d / "ecg.csv")["value"].to_numpy(np.float64)
+            p = pd.read_csv(d / "ppg.csv")["value"].to_numpy(np.float64)
+            t0 = time.time()
+            s.eng.use_baseline_recording(e, p, float(meta["fs"]["ecg"]), float(meta["fs"]["ppg"]), d.name)
+            print(f"[server] 기준 파일 {d.name} 처리 {time.time() - t0:.1f}s", flush=True)
+        except Exception as ex:
+            s.err = f"기준 파일 실패: {ex}"
+            print("[server] " + s.err, flush=True)
+
+    def preroll(self, d: Path, start: float, sec: float):
+        """기록의 [start, start+sec) 를 빠르게 먼저 넣는다 (시연용 옵션, 화면에 표시됨). 실제 측정값을 그대로 넣을 뿐 값을 만들지 않는다.
+        세션 시각 0 = 기록 start 초가 되므로 재생 시각 = replay_offset − preroll + 세션 시각."""
         import pandas as pd
         s = self.s
         try:
             e = pd.read_csv(d / "ecg.csv")["value"].to_numpy(np.float64)
             p = pd.read_csv(d / "ppg.csv")["value"].to_numpy(np.float64)
-            s.eng.push("ecg", e[: int(sec * s.fs_ecg)])
-            s.eng.push("ppg", p[: int(sec * s.fs_ppg)])
+            s.eng.push("ecg", e[int(start * s.fs_ecg): int((start + sec) * s.fs_ecg)])
+            s.eng.push("ppg", p[int(start * s.fs_ppg): int((start + sec) * s.fs_ppg)])
             s.preroll = sec
             t0 = time.time()
             for r in s.eng.poll():
@@ -230,7 +249,7 @@ class Server:
         s.hist.append((r.t_end, -1.0 if p_used is None else float(p_used), int(st.level)))
         s.hist = s.hist[-120:]
         bstat = "ready" if s.eng.baseline_ready else s.eng.base_status
-        ev = wb.ai_decision(s.id, r.win_in, st, baseline_status=bstat, bio_origin="recorded",
+        ev = wb.ai_decision(s.id, r.win_in, st, baseline_status=bstat, bio_origin=s.origin,
                             can_origin="simulated" if s.last_can_rx else "unavailable")
         s.last_conf_src = ev["payload"].get("confirmation_source")
         self.emit(ev)
@@ -250,14 +269,15 @@ class Server:
         s = self.s
         e = s.eng
         pk = {"type": "ui", "session": s.id, "mode": s.mode, "model_id": "S1-EP", "sm_id": "v2",
-              "bio_origin": "recorded", "can_origin": "simulated" if s.last_can_rx else "unavailable",
+              "bio_origin": s.origin, "can_origin": "simulated" if s.last_can_rx else "unavailable",
               "t_rel": round(s.t_rel(), 2), "preroll": s.preroll, "error": s.err,
               "decision_delay": round(e.lookahead + e.edge_margin + 30, 1) if e else -1}
         if e is None:
             pk["base_status"] = "unavailable"
             return pk
         bstat = e.base_status if not e.baseline_ready or e.base_status == "retry_required" else "ready"
-        pk.update(base_status=bstat, base_forced=e.base_forced, clean_windows=e.base_clean,
+        pk.update(feat_ready=round(min(1.0, s.t_rel() / max(e.spec.scales)), 3),
+                  base_status=bstat, base_forced=e.base_forced, base_source=e.base_source, clean_windows=e.base_clean,
                   required_clean=e.cfg.base_min_clean, base_wait=e.cfg.base_wait, base_max=e.cfg.base_max_wait,
                   base_a=r3(e.base_range[0] if e.base_range else None, 1),
                   base_b=r3(e.base_range[1] if e.base_range else None, 1),
@@ -308,7 +328,7 @@ class Server:
                 "model": "connected" if e else "disconnected"}
         self.emit(wb.system_status(s.id, s.t_rel(), bio_status=bstat, clean_windows=e.base_clean if e else None,
                                    bio_elapsed_s=s.t_rel(), can_status="unavailable", connections=conn,
-                                   origin="recorded"))
+                                   origin=s.origin))
 
     def bio_wave_event(self):
         s = self.s
@@ -322,7 +342,7 @@ class Server:
             x = x[-int(2.0 * fs): -int(1.0 * fs)]            # 직전 1초 (끝 1초는 필터 가장자리)
             out[ch] = wb.wave_channel(t_end - 2.0, fs, x.tolist(), unit, "common_preprocessed", None)
         if out:
-            self.emit(wb.bio_wave(s.id, s.t_rel() - 1.0, ecg=out.get("ecg"), ppg=out.get("ppg"), origin="recorded"))
+            self.emit(wb.bio_wave(s.id, s.t_rel() - 1.0, ecg=out.get("ecg"), ppg=out.get("ppg"), origin=s.origin))
 
     def send(self, obj):
         b = json.dumps(obj, ensure_ascii=False, separators=(",", ":")).encode("utf-8")

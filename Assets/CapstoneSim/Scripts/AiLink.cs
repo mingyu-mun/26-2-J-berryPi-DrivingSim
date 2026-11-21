@@ -24,7 +24,8 @@ namespace CapstoneSim
     {
         public string type, session, mode, model_id, sm_id, bio_origin, can_origin, error;
         public float t_rel, preroll, decision_delay = -1;
-        public string base_status = "";
+        public string base_status = "", base_source = "";
+        public float feat_ready = -1;
         public bool base_forced;
         public int clean_windows, required_clean = 20, n_windows;
         public float base_wait = 60, base_max = 600, base_a = -1, base_b = -1;
@@ -59,9 +60,10 @@ namespace CapstoneSim
         [Tooltip("시작 위치 앞 기록을 서버에 미리 빠르게 넣어 기준 수집이 끝난 상태로 시작 (시연용, 화면에 표시)")]
         public bool prerollBeforeStart = true;
         [Tooltip("웹보드(대시보드) 주소. 비우면 전송 안 함. 예: http://127.0.0.1:8000")] public string webboardUrl = "";
+        [Tooltip("개인 기준(baseline) 측정 파일 세션 폴더. 비우면 입력 앞부분에서 자동 수집")] public string baselineDir = "";
 
         [Header("참조")]
-        public BioReplay bio;
+        public BioSource bio;
         public CarController car;
         public TrackBuilder track;
         public string participantId = "P01";
@@ -94,7 +96,7 @@ namespace CapstoneSim
 
         [Serializable] class Hello
         {
-            public string type = "hello", session, participant, replay, mode, preroll_dir;
+            public string type = "hello", session, participant, replay, mode, preroll_dir, origin, baseline_dir;
             public double fs_ecg, fs_ppg; public float replay_offset, preroll_sec;
         }
         [Serializable] class BioPacket { public string type = "bio"; public float[] ecg, ppg; }
@@ -211,12 +213,16 @@ namespace CapstoneSim
         void SendHello()
         {
             if (bio == null || !bio.Loaded) return;
-            _preroll = prerollBeforeStart ? bio.startOffsetSec : 0f;
+            bool auto = string.IsNullOrWhiteSpace(baselineDir);
+            // 앞부분 빠른 입력 (기록 재생일 때만): 자동 기준 → 기록 0 s ~ 시작 위치 전부 (기준 수집까지 끝난 상태로 시작)
+            //                                    기준 파일 → 시작 위치 앞 최대 300 s (300 s 스케일 특징 창 채우기)
+            _preroll = bio.IsLive || !prerollBeforeStart ? 0f : auto ? bio.startOffsetSec : Mathf.Min(bio.startOffsetSec, 300f);
             Send(JsonUtility.ToJson(new Hello
             {
-                session = SessionId, participant = participantId, replay = bio.SessionName, mode = mode,
-                fs_ecg = bio.FsEcg, fs_ppg = bio.FsPpg, replay_offset = bio.startOffsetSec,
+                session = SessionId, participant = participantId, replay = bio.SessionName, mode = mode, origin = bio.Origin,
+                fs_ecg = bio.FsEcg, fs_ppg = bio.FsPpg, replay_offset = bio.IsLive ? 0f : bio.startOffsetSec,
                 preroll_dir = _preroll > 0 ? bio.SessionPath : "", preroll_sec = _preroll,
+                baseline_dir = auto ? "" : System.IO.Path.GetFullPath(baselineDir),
             }));
         }
 

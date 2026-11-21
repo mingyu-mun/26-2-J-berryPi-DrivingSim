@@ -20,15 +20,28 @@ namespace CapstoneSim
 
         public static bool Active { get; private set; }
         static float _ovBioOffset = float.NaN; static string _ovMode, _ovPreroll;
+        static readonly Dictionary<string, string> _args = new Dictionary<string, string>();
+        /// <summary>request.txt 로 넘어온 임의 인자 (없으면 null)</summary>
+        public static string Arg(string k) => _args.TryGetValue(k, out var v) ? v : null;
 
         [RuntimeInitializeOnLoadMethod(RuntimeInitializeLoadType.SubsystemRegistration)]
-        static void ResetStatics() { Active = false; _ovBioOffset = float.NaN; _ovMode = _ovPreroll = null; }
+        static void ResetStatics() { Active = false; _ovBioOffset = float.NaN; _ovMode = _ovPreroll = null; _args.Clear(); }
 
-        /// <summary>SimBootstrap 이 호출: 자동 테스트 요청에 bio_offset / ai_mode / ai_preroll 이 있으면 적용</summary>
-        public static void ApplyOverrides(BioReplay bio, AiLink ai)
+        /// <summary>SimBootstrap 이 호출: 자동 테스트 요청의 bio_offset / ai_mode / ai_preroll / replay / baseline 적용</summary>
+        public static void ApplyOverrides(BioSource bio, AiLink ai)
         {
             if (!Active) return;
             if (bio && !float.IsNaN(_ovBioOffset)) bio.startOffsetSec = _ovBioOffset;
+            if (bio is BioReplay br && !string.IsNullOrEmpty(Arg("replay")))
+            {
+                var e = ReplayLibrary.Find(Arg("replay"));
+                if (e != null) br.sessionDir = e.dir;
+            }
+            if (ai && Arg("baseline") != null)
+            {
+                var e = ReplayLibrary.Find(Arg("baseline"));
+                ai.baselineDir = e != null ? e.dir : "";     // baseline=auto → 자동 수집
+            }
             if (ai && !string.IsNullOrEmpty(_ovMode)) ai.mode = _ovMode;
             if (ai && !string.IsNullOrEmpty(_ovPreroll)) ai.prerollBeforeStart = _ovPreroll == "1" || _ovPreroll == "true";
         }
@@ -65,6 +78,7 @@ namespace CapstoneSim
             {
                 int i = line.IndexOf('='); if (i < 0) continue;
                 string k = line.Substring(0, i).Trim(), v = line.Substring(i + 1).Trim();
+                _args[k] = v;
                 if (k == "id") r._id = v;
                 if (k == "duration") float.TryParse(v, NumberStyles.Float, Inv, out r._duration);
                 if (k == "speed") float.TryParse(v, NumberStyles.Float, Inv, out r._speedKmh);

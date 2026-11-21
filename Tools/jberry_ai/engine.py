@@ -147,6 +147,7 @@ class StreamEngine:
         self.base_clean = 0
         self.base_range = None
         self.base_forced = False
+        self.base_source = "auto"               # auto | file:<이름>
         self.prof = self.pprof = None
         self.R = None
         self.next_start = None                    # 다음에 판정할 창 시작 시각
@@ -258,6 +259,12 @@ class StreamEngine:
             else:
                 self.base_status = "collecting"
                 return
+        self._set_profile(rec, rr, prr, a, b)
+        self.next_start = float(b)                 # 기준 구간과 겹치지 않는 첫 창부터 판정
+        print(f"[engine] 기준 {'강제 ' if self.base_forced else ''}확정 {a:.0f}~{b:.0f}s, 깨끗한 창 {self.base_clean}", flush=True)
+
+    def _set_profile(self, rec, rr, prr, a: float, b: float) -> None:
+        """기준 구간 [a, b) 로 개인 프로필(RR 특징 중앙값·산포)과 학생 기준 파형 R 을 만든다."""
         self.base_range = (float(a), float(b))
         info = BaselineInfo(self.session_id, a, b)
         self.prof = pd.DataFrame([{"profile_key": "live", **baseline_profile(rr, info, self.spec)}])
@@ -271,8 +278,31 @@ class StreamEngine:
             self.R[:, c] = cut(prep(rec.signals[ch], rec.fs[ch], ch), rs)[0]
         if self.base_status != "retry_required":
             self.base_status = "ready"
-        self.next_start = float(b)                 # 기준 구간과 겹치지 않는 첫 창부터 판정
-        print(f"[engine] 기준 {'강제 ' if self.base_forced else ''}확정 {a:.0f}~{b:.0f}s, 깨끗한 창 {self.base_clean}", flush=True)
+
+    def use_baseline_recording(self, ecg, ppg, fs_ecg: float, fs_ppg: float, name: str = "file") -> tuple:
+        """별도 기준(baseline) 측정 파일로 개인 기준을 정한다. 이후 들어오는 입력은 처음(0 s)부터 바로 판정.
+        파일 안에서도 상태 머신 v2 규칙(60 s 대기, 깨끗한 창 20개)으로 기준 구간을 고른다.
+        규칙을 못 채우면 [min(60, 길이×0.2), 끝] 을 강제로 쓰고 base_forced 로 표시한다."""
+        rec = Recording(subject_id=self.subject_id, session_id=f"{self.session_id}-baseline",
+                        signals={"ecg": np.asarray(ecg, np.float64), "ppg": np.asarray(ppg, np.float64)},
+                        fs={"ecg": float(fs_ecg), "ppg": float(fs_ppg)}, t0=0.0, prefiltered=False,
+                        dataset_id="jberry_sensor", meta={})
+        dur = min(len(ecg) / fs_ecg, len(ppg) / fs_ppg)
+        rr = extract_rr(rec, self.spec, "ecg")
+        prr = extract_rr(rec, self.spec, "ppg")
+        grid = np.arange(0.0, dur - 30 + 1e-6, self.spec.stride_sec)
+        ok, idx, (a, b) = select_baseline(grid, abn_ratio(rr, grid), self.cfg)
+        self.base_clean = int(len(idx))
+        if not ok or b > dur:
+            a, b = min(self.cfg.base_wait, dur * 0.2), dur
+            self.base_forced = True
+        self.base_status = "ready"
+        self._set_profile(rec, rr, prr, a, b)
+        self.base_source = f"file:{name}"
+        self.next_start = 0.0
+        print(f"[engine] 기준 파일 {name}: {'강제 ' if self.base_forced else ''}{a:.0f}~{b:.0f}s "
+              f"(파일 길이 {dur:.0f}s, 깨끗한 창 {self.base_clean})", flush=True)
+        return a, b
 
     @property
     def baseline_ready(self) -> bool:

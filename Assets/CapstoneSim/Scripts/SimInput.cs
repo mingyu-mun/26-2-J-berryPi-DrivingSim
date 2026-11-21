@@ -222,5 +222,18 @@ namespace CapstoneSim
             return false;
 #endif
         }
+
+        /// <summary>Esc / 게임패드 B : 뒤로 · 세션 메뉴</summary>
+        public static bool BackPressed()
+        {
+#if ENABLE_INPUT_SYSTEM
+            var kb = Keyboard.current; var gp = Gamepad.current;
+            return (kb != null && kb.escapeKey.wasPressedThisFrame) || (gp != null && gp.buttonEast.wasPressedThisFrame);
+#elif ENABLE_LEGACY_INPUT_MANAGER
+            return Input.GetKeyDown(KeyCode.Escape);
+#else
+            return false;
+#endif
+        }
     }
 }

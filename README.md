@@ -6,7 +6,9 @@
 - **차량 신호**(CAN과 비슷한 신호)를 시뮬레이터에서 만들어 냅니다.
 - 팀 모델 저장소 [`26-2-J-berryPi-Capstone`](https://github.com/mingyu-mun/26-2-J-berryPi-Capstone)의 **S1-EP 학생 모델 + 상태 머신 v2**가 **각자의 PC CPU에서** 실시간으로 판정하고, 그 결과를 화면에 띄웁니다.
 
-![화면 구성](docs/img/screen_drowsy.png)
+| 메인 메뉴 | 주행 화면 |
+|---|---|
+| ![메인 메뉴](docs/img/menu_home.png) | ![주행](docs/img/screen_drowsy.png) |
 
 ```
  Unity (센서·차량 에뮬레이터)                               Tools/jberry_ai/server.py  (Python .venv, torch CPU)
@@ -25,14 +27,14 @@
 |---|---|---|
 | 1 | Unity Hub에서 **Unity 6000.6.9f1** 설치 후, 이 저장소 폴더를 프로젝트로 열기 (`Add > Add project from disk`) | [docs/01_설치.md](docs/01_설치.md) |
 | 2 | 메뉴 **Capstone > AI 추론 환경 설치 (Python venv)** 실행 (Python 3.10~3.13 필요, 처음 한 번, 약 2~5분) | [docs/01_설치.md](docs/01_설치.md#3-ai-추론-환경-python) |
-| 3 | 측정 기록 변환: `python Tools/convert_recording.py "<측정 zip>" --out SimLogs/bio/rec_20261118` | [docs/02_구동절차.md](docs/02_구동절차.md#1-replay-데이터-준비) |
-| 4 | `Assets/Scenes/SampleScene` 열기 → **Play** | [docs/02_구동절차.md](docs/02_구동절차.md) |
-| 5 | 시연: `DrivingSim` Inspector의 `Bio Start Offset Sec` = **960** → 약 60초 뒤 졸음 확정 | [docs/02_구동절차.md](docs/02_구동절차.md#4-시연-시나리오) |
+| 3 | 측정 기록을 유니티 안으로 변환: `python Tools/convert_recording.py "<측정 zip>" --out Assets/StreamingAssets/Replays/rec_20261118` (기준 파일은 `--role baseline --end 480`) | [docs/02_구동절차.md](docs/02_구동절차.md#1-replay-데이터-준비) |
+| 4 | `Assets/Scenes/SampleScene` → **Play** → 메인 메뉴에서 **리플레이 모드** / **실측 모드(DEMO)** 선택 | [docs/02_구동절차.md](docs/02_구동절차.md#2-실행--메인-메뉴) |
+| 5 | 시연: 리플레이 모드 → 기준 '자동 수집' → 시작 위치 **16:00** → 주행 시작 → 약 60초 뒤 졸음 확정 | [docs/02_구동절차.md](docs/02_구동절차.md#4-시연-시나리오) |
 
 실측 기록이 없으면 다음 명령으로 만든 합성 파형으로 경로만 점검할 수 있습니다. 이 경우 판정 결과에는 의미가 없습니다.
 
 ```bash
-python Tools/gen_synthetic_bio.py --out SimLogs/bio/synthetic
+python Tools/gen_synthetic_bio.py --out Assets/StreamingAssets/Replays/synthetic
 ```
 
 ## 문서
@@ -44,11 +46,12 @@ python Tools/gen_synthetic_bio.py --out SimLogs/bio/synthetic
 | [03_규약.md](docs/03_규약.md) | **데이터·통신 규약**: 세션 폴더 형식, UDP 패킷, 웹보드 v1.2 이벤트 매핑, CAN 신호 매핑, 로그 컬럼 |
 | [04_AI모델연동.md](docs/04_AI모델연동.md) | 실시간 엔진 구조, `causal`/`exact` 모드, 저장소 코드와 다른 점, 검증 결과 |
 | [05_자동테스트.md](docs/05_자동테스트.md) | request.txt로 재컴파일 → Play → 스크린샷·리포트 자동 실행 |
+| [06_실측모드.md](docs/06_실측모드.md) | 실측 모드(DEMO): 라즈베리파이 → 시뮬레이터 패킷 형식, UDP·Serial·MQTT·WebSocket 비교(지연), PC 한 대로 시험하기 |
 | [Tools/jberry_ai/README.md](Tools/jberry_ai/README.md) | 추론 서버 상세 |
 
 ## 저장소에 올리지 않는 것 (중요)
 
-- **원신호·운전자 데이터**: `SimLogs/` 전체(생체 기록, 주행 로그, 판정 로그)는 `.gitignore`에 들어 있습니다. 측정 zip은 팀 공유 드라이브로 주고받고, 각자 `convert_recording.py`로 변환합니다.
+- **원신호·운전자 데이터**: `SimLogs/` 전체(생체 기록, 주행 로그, 판정 로그)와 `Assets/StreamingAssets/Replays/` 안의 기록은 `.gitignore`에 들어 있습니다. 측정 zip은 팀 공유 드라이브로 주고받고, 각자 `convert_recording.py`로 변환합니다.
 - **Unity Asset Store 에셋**(Sport Car Free 등): 재배포가 금지되어 있으니 각자 받아서 Import합니다. 에셋이 없으면 코드로 만든 기본 차량이 나옵니다.
 - **Python 가상환경**(`Tools/jberry_ai/.venv`): 각자 메뉴로 생성합니다.
 - 모델 가중치(`Tools/jberry_ai/repo/models`)는 팀 모델 저장소에서 복사한 것입니다. 사용 조건은 [models/README.md](Tools/jberry_ai/repo/models/README.md)를 따릅니다 (WESAD 학습분은 비상업 용도).
@@ -56,12 +59,14 @@ python Tools/gen_synthetic_bio.py --out SimLogs/bio/synthetic
 ## 폴더 구성
 
 ```
-Assets/CapstoneSim/Scripts   시뮬레이터 런타임 (도로·차량·입력·로거·HUD·Replay·AI 연결·패널·자동테스트)
+Assets/CapstoneSim/Scripts   시뮬레이터 런타임 (메인 메뉴·디자인 시스템(SimTheme)·도로·차량·입력·로거·HUD·Replay/실측 입력·AI 연결·패널·자동테스트)
+Assets/StreamingAssets/Replays  리플레이·기준 측정 기록 (각자 넣음, git 제외)
 Assets/CapstoneSim/Editor    Capstone 메뉴, 자동 테스트 감시, AI 환경 설치
 Assets/Scenes/SampleScene    DrivingSim 오브젝트가 들어 있는 씬
 Tools/jberry_ai              실시간 추론 서버 (engine.py, server.py, setup_env.py, selftest.py, repo/ = 팀 저장소 코드 일부)
 Tools/convert_recording.py   측정 zip → Replay 세션 폴더
 Tools/gen_synthetic_bio.py   합성 ECG/PPG (점검용)
+Tools/rpi_bridge/rpi_sender.py  실측 모드 시험용 송신기 (라즈베리파이 흉내, UDP)
 Tools/check_log.py           주행 로그 점검·SDLP·생체신호 정렬
 docs/                        설치·구동·규약·모델·자동테스트 문서
 ```

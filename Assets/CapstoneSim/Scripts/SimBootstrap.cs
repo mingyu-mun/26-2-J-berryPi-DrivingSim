@@ -58,6 +58,8 @@ namespace CapstoneSim
         [Tooltip("Play 시 Tools/jberry_ai/server.py (저장소 S1-EP 모델) 자동 실행")] public bool aiAutoLaunchServer = true;
         [Tooltip("비우면 Tools/jberry_ai/.venv 의 Python 사용")] public string pythonExe = "";
         [Tooltip("웹보드 주소 (비우면 전송 안 함). 예: http://127.0.0.1:8000")] public string aiWebboardUrl = "";
+        [Tooltip("개인 기준(baseline) 측정 파일 세션 폴더. 비우면 재생 기록 앞부분에서 자동 수집")] public string baselineSessionDir = "";
+        [Tooltip("Play 시 메인 메뉴부터 시작 (끄면 위 설정으로 바로 리플레이 주행)")] public bool showMainMenu = true;
 
         [Header("물리")]
         [Tooltip("물리 갱신 주기 [Hz]. 차량 안정성을 위해 100 Hz 권장")] public float physicsHz = 100f;
@@ -71,8 +73,17 @@ namespace CapstoneSim
         public TrackBuilder Track { get; private set; }
         public DrivingDataLogger Logger { get; private set; }
         public FollowCamera Cam { get; private set; }
-        public BioReplay Bio { get; private set; }
+        public BioSource Bio { get; private set; }
         public AiLink Ai { get; private set; }
+        public SimHUD Hud { get; private set; }
+        public SimPanels Panels { get; private set; }
+        public MainMenu Menu { get; private set; }
+        public LiveBioSource Live { get; private set; }
+        public bool InSession { get; private set; }
+        public SessionConfig Session { get; private set; }
+        public float SessionStartRealtime { get; private set; }
+        FollowCamera.Mode _driveCamMode = FollowCamera.Mode.Driver;
+        Vector3 _spawnPos; Quaternion _spawnRot;
 
         Bounds _carBounds = new Bounds(new Vector3(0f, 0.75f, 0f), new Vector3(1.8f, 1.5f, 4.4f));
 
@@ -122,6 +133,7 @@ namespace CapstoneSim
             // Rigidbody 보간(interpolation)이 켜져 있으면 transform 만 옮겨서는 안 되고 rb 위치도 함께 옮겨야 함
             Car.Teleport(spawnPos + Vector3.up * 0.3f, spawnRot);
             Car.Initialize();
+            _spawnPos = spawnPos; _spawnRot = spawnRot;
 
             // ---------- 카메라 ----------
             var cam = Camera.main;
@@ -184,34 +196,121 @@ namespace CapstoneSim
             Logger.car = Car;
             Logger.track = Track;
 
-            var hud = gameObject.AddComponent<SimHUD>();
-            hud.car = Car;
-            hud.logger = Logger;
+            Hud = gameObject.AddComponent<SimHUD>();
+            Hud.car = Car;
+            Hud.logger = Logger;
+            Hud.sim = this;
 
-            // ---------- 생체신호 Replay + AI 판정 + 화면 패널 ----------
-            if (enableBioAi)
+            // ---------- 메인 메뉴 / 세션 ----------
+            // 자동 테스트: menu=<home|replay|live> 인자가 있으면 그 메뉴 화면에 머물고, 없으면 바로 리플레이 세션
+            Menu = gameObject.AddComponent<MainMenu>();
+            Menu.sim = this;
+            string menuArg = AutoTestRunner.Active ? AutoTestRunner.Arg("menu") : null;
+            if (!enableBioAi) EnterDriveOnly();
+            else if (AutoTestRunner.Active && string.IsNullOrEmpty(menuArg)) StartSession(SessionConfig.FromInspector(this));
+            else if (showMainMenu || !string.IsNullOrEmpty(menuArg)) EnterMenu(menuArg);
+            else StartSession(SessionConfig.FromInspector(this));
+            // 자동 테스트: pause_at=<초> 이면 그 시각에 세션 메뉴를 띄워 스크린샷에 담는다
+            if (AutoTestRunner.Active && float.TryParse(AutoTestRunner.Arg("pause_at"), System.Globalization.NumberStyles.Float,
+                    System.Globalization.CultureInfo.InvariantCulture, out float pauseAt))
+                StartCoroutine(PauseLater(pauseAt));
+        }
+
+        System.Collections.IEnumerator PauseLater(float t)
+        {
+            yield return new WaitForSecondsRealtime(t);
+            if (InSession) Menu.ShowPause();
+        }
+
+        // ================================================================== 세션 관리
+        void EnterDriveOnly()
+        {
+            InSession = true;
+            Hud.enabled = true;
+        }
+
+        /// <summary>메인 메뉴로: 차량 정차, 쇼케이스 카메라, HUD 숨김</summary>
+        public void EnterMenu(string page = null)
+        {
+            InSession = false;
+            if (Cam && Cam.mode != FollowCamera.Mode.Showcase) { _driveCamMode = Cam.mode; Cam.mode = FollowCamera.Mode.Showcase; }
+            Car.externalControl = true; Car.extThrottle = 0f; Car.extBrake = 1f; Car.extSteerWheelDeg = 0f;
+            Logger.allowInput = false;
+            Hud.enabled = false;
+            Menu.Show(page);
+        }
+
+        /// <summary>메뉴에서 '주행 시작': 생체 입력(재생/실시간) + AI 연결 + 화면 패널을 만든다</summary>
+        public void StartSession(SessionConfig c)
+        {
+            if (InSession && Ai) EndSession(false);
+            Session = c;
+            Menu.Hide();
+            if (Cam) Cam.mode = _driveCamMode;
+            Car.externalControl = false;
+            Logger.allowInput = true;
+            Logger.participantId = string.IsNullOrWhiteSpace(c.participantId) ? participantId : c.participantId;
+            Hud.enabled = true;
+
+            if (c.live)
             {
-                Bio = gameObject.AddComponent<BioReplay>();
-                Bio.sessionDir = bioSessionDir;
-                Bio.startOffsetSec = bioStartOffsetSec;
-                Ai = gameObject.AddComponent<AiLink>();
-                Ai.autoLaunchServer = aiAutoLaunchServer;
-                Ai.pythonExe = pythonExe;
-                Ai.mode = aiMode;
-                Ai.prerollBeforeStart = aiPrerollBeforeStart;
-                Ai.webboardUrl = aiWebboardUrl;
-                Ai.bio = Bio; Ai.car = Car; Ai.track = Track; Ai.participantId = participantId;
-                AutoTestRunner.ApplyOverrides(Bio, Ai);   // 자동 테스트 중이면 replay 위치·모드 덮어쓰기
-                Bio.Begin();
-                var panels = gameObject.AddComponent<SimPanels>();
-                panels.bio = Bio; panels.ai = Ai;
-                Logger.ai = Ai; Logger.bio = Bio;
+                var lb = EnsureLive();
+                c.ApplyTo(lb);
+                Bio = lb;
             }
+            else
+            {
+                var br = gameObject.AddComponent<BioReplay>();
+                br.sessionDir = c.replayDir;
+                br.startOffsetSec = c.startOffset;
+                Bio = br;
+            }
+            Ai = gameObject.AddComponent<AiLink>();
+            Ai.autoLaunchServer = aiAutoLaunchServer;
+            Ai.pythonExe = pythonExe;
+            Ai.mode = c.aiMode;
+            Ai.prerollBeforeStart = c.preroll;
+            Ai.baselineDir = c.baselineDir ?? "";
+            Ai.webboardUrl = aiWebboardUrl;
+            Ai.bio = Bio; Ai.car = Car; Ai.track = Track; Ai.participantId = Logger.participantId;
+            AutoTestRunner.ApplyOverrides(Bio, Ai);   // 자동 테스트 중이면 재생 위치·모드·기준 파일 덮어쓰기
+            Bio.Begin();
+            Panels = gameObject.AddComponent<SimPanels>();
+            Panels.bio = Bio; Panels.ai = Ai; Panels.sim = this;
+            Logger.ai = Ai; Logger.bio = Bio;
+            InSession = true;
+            SessionStartRealtime = Time.realtimeSinceStartup;
+        }
+
+        /// <summary>세션 종료: 기록 정지, AI 서버 종료, 차량 원위치 후 메뉴로</summary>
+        public void EndSession(bool toMenu = true)
+        {
+            Logger.StopRecording();
+            Logger.ai = null; Logger.bio = null;
+            if (Panels) Destroy(Panels);
+            if (Ai) Destroy(Ai);                     // OnDisable 에서 Python 서버 종료
+            if (Bio && Bio != Live) Destroy(Bio);
+            if (Live) { Destroy(Live); Live = null; }
+            Panels = null; Ai = null; Bio = null;
+            InSession = false;
+            Car.Teleport(_spawnPos + Vector3.up * 0.3f, _spawnRot);
+            Car.SetForwardSpeed(0f);
+            Car.TurnSignal = 0;
+            if (toMenu) EnterMenu("home");
+        }
+
+        /// <summary>실측 모드 수신기 (메뉴의 수신 시험과 세션이 같은 것을 쓴다)</summary>
+        public LiveBioSource EnsureLive()
+        {
+            if (!Live) Live = gameObject.AddComponent<LiveBioSource>();
+            return Live;
         }
 
         void Update()
         {
             if (!Car) return;
+            if (!InSession) return;                       // 메뉴에서는 MainMenu 가 입력을 받는다
+            if (Menu && Menu.Visible) return;
 
             if (SimInput.CameraTogglePressed() && Cam) Cam.ToggleMode();
 
