@@ -1,5 +1,5 @@
 // AutoTestRunner.cs
-// 자동 테스트 모드 (에디터 전용). <프로젝트>/SimLogs/autotest/active.txt 가 있을 때만 동작한다.
+// 자동 테스트 모드 (에디터, 또는 빌드한 실행 파일). <프로젝트>/SimLogs/autotest/active.txt 가 있을 때만 동작한다.
 //   - 차량을 자율주행(차로 유지 + 속도 유지)으로 몰면서
 //   - 정해진 시점에 여러 각도의 스크린샷(JPG)을 찍고
 //   - FPS, 바퀴 정렬, 차선 편차, 스핀 여부, 콘솔 에러/경고를 report.txt 로 남긴 뒤 Play 를 종료한다.
@@ -104,7 +104,7 @@ namespace CapstoneSim
             string cmd = Arg("spawn_py");
             if (string.IsNullOrEmpty(cmd)) return;
             string root = Path.GetFullPath(Path.Combine(Application.dataPath, ".."));
-            string py = Path.Combine(root, "Tools", "jberry_ai", ".venv", "Scripts", "python.exe");
+            string py = SimPaths.AiPython ?? "python";
             try
             {
                 var psi = new System.Diagnostics.ProcessStartInfo(File.Exists(py) ? py : "python", "-u " + cmd)
@@ -383,6 +383,8 @@ namespace CapstoneSim
             try { File.Delete(FlagPath); } catch { }
 #if UNITY_EDITOR
             UnityEditor.EditorApplication.isPlaying = false;
+#else
+            Application.Quit();
 #endif
         }
 

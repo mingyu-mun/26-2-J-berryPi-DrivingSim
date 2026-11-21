@@ -21,7 +21,11 @@
                                                                          └─ (선택) 웹보드 대시보드 /api/events
 ```
 
-## 빠른 시작
+## Unity 없이 실행 (팀원용)
+
+`JberryDrivingSim_<날짜>.zip`을 받아 풀고 `JberryDrivingSim.exe`를 실행하면 됩니다. 휴대용 AI 엔진이 들어 있어 따로 설치할 것이 없습니다. 자세한 내용과 빌드 방법은 [docs/07_실행파일.md](docs/07_실행파일.md)에 있습니다.
+
+## 빠른 시작 (Unity 에디터, 개발자용)
 
 | 단계 | 할 일 | 자세히 |
 |---|---|---|
@@ -47,6 +51,7 @@ python Tools/gen_synthetic_bio.py --out Assets/StreamingAssets/Replays/synthetic
 | [04_AI모델연동.md](docs/04_AI모델연동.md) | 실시간 엔진 구조, `causal`/`exact` 모드, 저장소 코드와 다른 점, 검증 결과 |
 | [05_자동테스트.md](docs/05_자동테스트.md) | request.txt로 재컴파일 → Play → 스크린샷·리포트 자동 실행 |
 | [06_실측모드.md](docs/06_실측모드.md) | 실측 모드(DEMO): 라즈베리파이 → 시뮬레이터 패킷 형식, UDP·Serial·MQTT·WebSocket 비교(지연), PC 한 대로 시험하기 |
+| [07_실행파일.md](docs/07_실행파일.md) | Unity 없이 실행하는 Windows 실행 파일 (팀원 실행, 빌드·배포 zip) |
 | [Tools/jberry_ai/README.md](Tools/jberry_ai/README.md) | 추론 서버 상세 |
 
 ## 저장소에 올리지 않는 것 (중요)

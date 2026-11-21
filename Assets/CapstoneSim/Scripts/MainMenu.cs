@@ -68,11 +68,8 @@ namespace CapstoneSim
         void Refresh()
         {
             _lib = ReplayLibrary.All(true);
-            string root = Path.GetFullPath(Path.Combine(Application.dataPath, ".."));
-            _venvOk = File.Exists(Path.Combine(root, "Tools", "jberry_ai", ".venv", "Scripts", "python.exe"))
-                      || File.Exists(Path.Combine(root, "Tools", "jberry_ai", ".venv", "bin", "python"));
-            string st = Path.Combine(root, "SimLogs", "ai", "setup_status.txt");
-            _setupStatus = File.Exists(st) ? File.ReadAllText(st).Trim() : "";
+            _venvOk = SimPaths.AiReady;
+            _setupStatus = SimPaths.SetupStatus;
         }
 
         void Update()
@@ -127,15 +124,49 @@ namespace CapstoneSim
             int nRep = 0, nBase = 0;
             foreach (var e in _lib) if (e.IsBaseline) nBase++; else nRep++;
             float x = 72;
-            bool setupOk = _venvOk && (_setupStatus == "" || _setupStatus.StartsWith("ok"));
-            SimTheme.Dot(new Rect(x, y, 420, 24), _venvOk ? (setupOk ? "AI 엔진 준비됨 (S1-EP · 상태 머신 v2 · CPU)" : $"AI 엔진 설치를 확인하세요 · {_setupStatus}") : "AI 엔진 없음 — Capstone > AI 추론 환경 설치",
-                         setupOk ? SimTheme.Green : SimTheme.Amber);
+            DrawEngineStatus(x, y);
             x += 470;
             SimTheme.Dot(new Rect(x, y, 300, 24), $"리플레이 기록 {nRep}개 · 기준 파일 {nBase}개", nRep > 0 ? SimTheme.Accent : SimTheme.Amber);
             x += 320;
             SimTheme.Label(new Rect(x, y, 300, 24), Version, 14, SimTheme.Dim);
             SimTheme.Label(new Rect(W - 372, y, 300, 24), _page == Page.Home ? "" : "Esc  뒤로", 14, SimTheme.Dim, false, TextAnchor.MiddleRight);
         }
+
+        float _nextPoll;
+        /// <summary>AI 엔진 상태 + 없으면 [AI 엔진 설치] 버튼. 설치 중에는 진행 상황</summary>
+        void DrawEngineStatus(float x, float y)
+        {
+            if (!_venvOk && Time.realtimeSinceStartup > _nextPoll) { _nextPoll = Time.realtimeSinceStartup + 1.5f; Refresh(); }
+            if (AiInstaller.Running || (_setupStatus.StartsWith("running") && SetupLogFresh()))
+            {
+                string step = _setupStatus.StartsWith("running:") ? _setupStatus.Substring(8).Trim() : "";
+                string tail = AiInstaller.LastLogLine();
+                SimTheme.Dot(new Rect(x, y, 440, 24), $"AI 엔진 설치 중 {Spinner()}  {step}", SimTheme.Amber);
+                if (!string.IsNullOrEmpty(tail)) SimTheme.Label(new Rect(x + 16, y - 24, 700, 20), tail, 12, SimTheme.Dim);
+                return;
+            }
+            if (_venvOk)
+            {
+                SimTheme.Dot(new Rect(x, y, 440, 24), "AI 엔진 준비됨 (S1-EP · 상태 머신 v2 · CPU)", SimTheme.Green);
+                return;
+            }
+            string why = _setupStatus.StartsWith("fail") ? "설치 실패 · " + _setupStatus.Substring(5).Trim() : "AI 엔진이 없습니다";
+            SimTheme.Dot(new Rect(x, y, 300, 24), why, SimTheme.Amber);
+            if (SimTheme.Button(new Rect(x + 300, y - 8, 160, 40), "AI 엔진 설치", 15, SimTheme.Kind.Primary)) { AiInstaller.Start(); Refresh(); }
+        }
+
+        /// <summary>다른 곳(에디터 메뉴 등)에서 돌린 설치가 아직 진행 중인지: 로그가 90초 안에 바뀌었는지</summary>
+        static bool SetupLogFresh()
+        {
+            try
+            {
+                var p = Path.Combine(SimPaths.AiLogDir, "setup_log.txt");
+                return File.Exists(p) && (System.DateTime.Now - File.GetLastWriteTime(p)).TotalSeconds < 90;
+            }
+            catch { return false; }
+        }
+
+        static string Spinner() => "◐◓◑◒"[(int)(Time.realtimeSinceStartup * 4f) % 4].ToString();
 
         // ---------------------------------------------------------------- 홈
         void DrawHome()
@@ -236,7 +267,7 @@ namespace CapstoneSim
             bool can = sel != null && _venvOk;
             if (SimTheme.Button(new Rect(x0 + W - pad - 280, ty + 40, 280, 64), "주행 시작 ▶", 22, SimTheme.Kind.Primary, can))
             { _cfg.live = false; sim.StartSession(_cfg); }
-            if (!_venvOk) SimTheme.Label(new Rect(x0 + W - pad - 280, ty + 108, 280, 40), "AI 엔진부터 설치하세요", 13, SimTheme.Amber, false, TextAnchor.UpperCenter);
+            if (!_venvOk) SimTheme.Label(new Rect(x0 + W - pad - 280, ty + 108, 280, 40), "아래 상태 줄에서 AI 엔진을 설치하세요", 13, SimTheme.Amber, false, TextAnchor.UpperCenter);
         }
 
         string PrerollText(ReplayEntry sel)

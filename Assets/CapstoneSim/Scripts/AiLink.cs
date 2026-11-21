@@ -57,7 +57,7 @@ namespace CapstoneSim
 
         [Header("Python 서버 자동 실행")]
         public bool autoLaunchServer = true;
-        [Tooltip("비우면 Tools/jberry_ai/.venv 의 python → python → py 순서")] public string pythonExe = "";
+        [Tooltip("비우면 Tools/jberry_ai/python(휴대용) → .venv 순서")] public string pythonExe = "";
         [Tooltip("causal: 실시간(과거 RR 만, 지연 없음) / exact: 학습·batch 와 같은 계산(판정이 약 140초 늦게 나옴)")]
         public string mode = "causal";
         [Tooltip("시작 위치 앞 기록을 서버에 미리 빠르게 넣어 기준 수집이 끝난 상태로 시작 (시연용, 화면에 표시)")]
@@ -109,10 +109,9 @@ namespace CapstoneSim
             public float[] t, speed, steer, accel, brake; public int[] gear, turn;
         }
 
-        public string ProjectRoot => Path.GetFullPath(Path.Combine(Application.dataPath, ".."));
-        public string LogDir => Path.Combine(ProjectRoot, "SimLogs", "ai");
-        public string ServerDir => Path.Combine(ProjectRoot, "Tools", "jberry_ai");
-        public string VenvPython => Path.Combine(ServerDir, ".venv", "Scripts", "python.exe");
+        public string ProjectRoot => SimPaths.Root;
+        public string LogDir => SimPaths.AiLogDir;
+        public string ServerDir => SimPaths.AiDir;
 
         IEnumerator Start()
         {
@@ -156,11 +155,12 @@ namespace CapstoneSim
             if (!string.IsNullOrWhiteSpace(pythonExe)) cand.Add(pythonExe);
             else
             {
-                if (File.Exists(VenvPython)) cand.Add(VenvPython);
+                string py = SimPaths.AiPython;
+                if (py != null) cand.Add(py);
                 else
                 {
-                    ServerStatus = "AI 추론 환경 미설치 — 메뉴 Capstone > AI 추론 환경 설치";
-                    UnityEngine.Debug.LogError("[AiLink] " + ServerStatus + $" ({VenvPython} 없음)");
+                    ServerStatus = "AI 엔진이 없습니다 — 메인 메뉴에서 [AI 엔진 설치]";
+                    UnityEngine.Debug.LogError("[AiLink] " + ServerStatus + $" ({SimPaths.PortablePython}, {SimPaths.VenvPython} 없음)");
                     yield break;
                 }
             }

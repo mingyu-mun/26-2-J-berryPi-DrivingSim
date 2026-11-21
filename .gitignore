@@ -48,3 +48,9 @@ __pycache__/
 /Assets/StreamingAssets/Replays/*
 !/Assets/StreamingAssets/Replays/README.txt
 !/Assets/StreamingAssets/Replays/README.txt.meta
+
+# 빌드 때 생성되는 셰이더 보존용 재질 (CapstoneBuild.EnsureShaderKeep)
+/Assets/CapstoneSim/Resources/
+/Assets/CapstoneSim/Resources.meta
+# 휴대용 Python AI 엔진
+Tools/jberry_ai/python/
